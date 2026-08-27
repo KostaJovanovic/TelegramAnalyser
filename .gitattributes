@@ -1,0 +1,30 @@
+# Line endings, and one of these is load-bearing.
+#
+# This machine has `core.autocrlf=true`, so without a rule here git checks
+# everything out with CRLF. For source that is harmless. For the files below it
+# is not.
+
+* text=auto eol=lf
+
+# **The goldens and the recorded oracle are compared byte for byte**, against
+# strings this program builds with `\n`. Checked out with CRLF they differ from
+# the render on every line, and the failure reads as "the report drifted" on a
+# fresh clone that has changed nothing. `-text` disables conversion in both
+# directions, so what is committed is what lands on disk.
+crates/tga-report/tests/golden.html          -text
+crates/tga-report/tests/golden-classic.html  -text
+crates/tga-report/tests/synthetic/python.html -text
+crates/tga-report/tests/synthetic/stats.json  -text
+crates/tga-report/tests/synthetic/result.json -text
+crates/tga-report/tests/synthetic/events.json -text
+crates/tga-report/tests/fixture.stats.json    -text
+
+# **cmd's `goto` cannot find a label in an LF-only batch file.** It fails with
+# "The system cannot find the batch label specified" partway through a run that
+# has already done its work — which is how `save.bat` first shipped.
+*.bat text eol=crlf
+
+# Never touch the typefaces. A CRLF conversion inside a TTF is a font that no
+# longer parses, and the failure surfaces as a window in the wrong typeface with
+# no error anywhere.
+*.ttf binary
