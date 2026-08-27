@@ -21,7 +21,6 @@ Telegram Export Analyser
 Options
     --out PATH        where to write the report (default: report.html in the
                       export folder)
-    --theme dark|light
     --digest          also write analysis/digest.jsonl and analysis/EVENTS.md,
                       which is what a model needs to map events onto the
                       timeline
@@ -61,7 +60,6 @@ fn main() -> Result<()> {
     let mut out: Option<PathBuf> = None;
     let mut from_stats: Option<PathBuf> = None;
     let mut notes_path: Option<PathBuf> = None;
-    let mut theme = tga_report::palette::DEFAULT.to_string();
     let mut digest = false;
     let mut embed_fonts = true;
     let mut stats_out: Option<PathBuf> = None;
@@ -74,10 +72,6 @@ fn main() -> Result<()> {
             "--out" => match rest.next() {
                 Some(path) => out = Some(PathBuf::from(path)),
                 None => bail!("--out needs a path"),
-            },
-            "--theme" => match rest.next() {
-                Some(name) => theme = name.to_lowercase(),
-                None => bail!("--theme needs dark or light"),
             },
             "--digest" => digest = true,
             "--no-fonts" => embed_fonts = false,
@@ -133,7 +127,6 @@ fn main() -> Result<()> {
             &tga_report::names_from_stats(&stats),
             &notes,
             &tga_report::Options {
-                theme,
                 embed_fonts,
                 classic,
                 ..Default::default()
@@ -204,7 +197,6 @@ fn main() -> Result<()> {
         &tga_report::names_from_stats(&stats),
         &notes,
         &tga_report::Options {
-            theme,
             embed_fonts,
             classic,
             ..Default::default()

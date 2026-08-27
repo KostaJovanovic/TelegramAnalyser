@@ -34,7 +34,15 @@ pub use sections::{Names, WIDTH};
 // the stylesheet
 // ---------------------------------------------------------------------------
 
-fn tokens_css() -> String {
+/// The custom properties, as `<html>` class blocks.
+///
+/// **The report is dark only, and the surface emits one block.** The light
+/// palette is still here, and still emitted by the classic render, for one
+/// reason: `report.py` writes both blocks and the parity legs compare the
+/// stylesheet character for character. The classic path is a frozen
+/// reproduction of that document, not a second product — so it keeps a light
+/// theme nothing offers to switch to, and the surface does not.
+fn tokens_css(classic: bool) -> String {
     fn block(theme: &str) -> String {
         let pairs: String = palette::tokens(theme)
             .iter()
@@ -47,11 +55,14 @@ fn tokens_css() -> String {
             .collect();
         format!("{pairs}{ramp}--self:{};", palette::token(theme, "rule"))
     }
-    format!(
-        "html.dark{{{}}}html.light{{{}}}",
-        block("dark"),
-        block("light")
-    )
+    if classic {
+        return format!(
+            "html.dark{{{}}}html.light{{{}}}",
+            block("dark"),
+            block("light")
+        );
+    }
+    format!("html.dark{{{}}}", block("dark"))
 }
 
 /// The stylesheet, verbatim from `report.py`.
@@ -438,6 +449,17 @@ const JS_SURFACE: &str = r#"
 (function(){
   var root=document.documentElement;
 
+  /* -- dark only --------------------------------------------------------- */
+  /* The script above is frozen -- it is `report.py`'s, character for character,
+     and the parity legs compare it -- so it still restores a theme from
+     localStorage under a key an older report may well have written. This
+     document has no `html.light` block to restore into, and no switch to get
+     back from it, so a stored 'light' would leave a page with no colours at
+     all. Undo it, and forget the key so it cannot happen twice. */
+  root.classList.remove('light');
+  root.classList.add('dark');
+  try{localStorage.removeItem('tg-report-theme');}catch(e){}
+
   /* -- presence tooltips ------------------------------------------------- */
   /* The compact rows carry their counts once per row rather than once per
      cell, which is most of the size budget. Every bucket is the same width, so
@@ -533,8 +555,6 @@ pub fn today_stamp() -> String {
 
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// `dark` or `light`. Anything else falls back to [`palette::DEFAULT`].
-    pub theme: String,
     pub embed_fonts: bool,
     /// Who the notes section says wrote the file.
     pub source: String,
@@ -564,7 +584,6 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            theme: palette::DEFAULT.to_string(),
             embed_fonts: true,
             source: SOURCE.to_string(),
             stamp: today_stamp(),
@@ -601,11 +620,6 @@ pub fn names_from_stats(stats: &Value) -> Names {
 
 /// The whole report, as one string.
 pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) -> String {
-    let theme = if palette::known(&options.theme) {
-        options.theme.as_str()
-    } else {
-        palette::DEFAULT
-    };
     let classic = options.classic;
     let title = format!(
         "{} — archive report",
@@ -652,10 +666,10 @@ pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) ->
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
          <title>{}</title><style>{}{}{CSS}{extra_css}{kind_rules}</style></head><body>{body}{axis}\
          <div id=\"tip\" role=\"status\"></div><script>{JS}{extra_js}</script></body></html>\n",
-        esc(theme),
+        palette::DEFAULT,
         esc(&title),
         assets::font_css(options.embed_fonts),
-        tokens_css(),
+        tokens_css(classic),
     )
 }
 
@@ -766,42 +780,52 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_is_a_class_on_html_and_an_unknown_one_falls_back() {
-        let dark = render(&bare(), &Names::new(), &Notes::default(), &options());
-        assert!(dark.contains("<html lang=\"en\" class=\"dark\">"));
+    fn the_report_is_dark_and_offers_no_choice_about_it() {
+        let html = render(&bare(), &Names::new(), &Notes::default(), &options());
+        assert!(html.contains("<html lang=\"en\" class=\"dark\">"));
+        assert!(html.contains("html.dark{"));
+        assert!(html.contains("--r5:"));
+        assert!(html.contains("--self:"));
 
-        let light = render(
-            &bare(),
-            &Names::new(),
-            &Notes::default(),
-            &Options {
-                theme: "light".into(),
-                ..options()
-            },
+        // One block, one switch fewer. A light block nothing can reach is dead
+        // weight in every report ever written; a switch to it with no block is
+        // a page with no colours.
+        assert!(!html.contains("html.light{"), "the surface emits one block");
+        assert!(
+            !html.contains("id=\"theme\""),
+            "and no control to change it"
         );
-        assert!(light.contains("class=\"light\""));
-
-        let odd = render(
-            &bare(),
-            &Names::new(),
-            &Notes::default(),
-            &Options {
-                theme: "solarized".into(),
-                ..options()
-            },
-        );
-        assert!(odd.contains("class=\"dark\""), "unknown theme falls back");
     }
 
     #[test]
-    fn both_theme_blocks_are_always_emitted_so_the_switch_needs_no_re_render() {
-        // The stated property of the design: light/dark is a class on <html>,
-        // not a second pass over the data.
-        let html = render(&bare(), &Names::new(), &Notes::default(), &options());
+    fn the_classic_render_still_carries_both_blocks_and_the_switch() {
+        // Not a second product — a byte-for-byte reproduction of `report.py`,
+        // which had a theme switch. The parity legs compare the stylesheet
+        // character for character, so this is load-bearing rather than
+        // leftover.
+        let html = render(
+            &bare(),
+            &Names::new(),
+            &Notes::default(),
+            &Options {
+                classic: true,
+                ..options()
+            },
+        );
         assert!(html.contains("html.dark{"));
         assert!(html.contains("html.light{"));
-        assert!(html.contains("--r5:"));
-        assert!(html.contains("--self:"));
+        assert!(html.contains("id=\"theme\""));
+    }
+
+    #[test]
+    fn a_stored_light_theme_cannot_leave_the_surface_with_no_colours() {
+        // The frozen script restores `tg-report-theme` from localStorage, and
+        // an older report may well have written 'light' under that key. With no
+        // `html.light` block and no switch, restoring it would render a page
+        // with no colours and no way back. The surface script undoes it.
+        let html = render(&bare(), &Names::new(), &Notes::default(), &options());
+        assert!(html.contains("root.classList.remove('light')"));
+        assert!(html.contains("localStorage.removeItem('tg-report-theme')"));
     }
 
     #[test]

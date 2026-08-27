@@ -27,6 +27,12 @@ set "KRGMEXPORT="
 for /d %%d in ("J:\temp pureraw\KRGM*") do set "KRGMEXPORT=%%~fd"
 if not defined KRGMEXPORT set "KRGMEXPORT=J:\temp pureraw\KRGM (not mounted)"
 
+rem What gets built, and what `build` kills before it tries to overwrite them.
+rem Two binaries from one `cargo build --release`: the window and the same
+rem program with the window taken off.
+set "EXENAME=TelegramAnalyser.exe"
+set "CLINAME=tga.exe"
+
 rem The Python analyser, which is the oracle for both the numbers and the HTML.
 rem Its venv, not the system python: `analyser.read` and `analyser.metrics` are
 rem plain modules, but the package imports PySide6 on the window path.
@@ -75,7 +81,7 @@ echo   2  commit   test + commit, no push
 echo   3  push     push the current branch
 echo   4  pull     pull the current branch
 echo   5  test     fmt + clippy + every suite
-echo   6  build    cargo build --release
+echo   6  build    cargo build --release, then copy both exes into dist\
 echo   7  run      open the window
 echo   8  report   write report.html for an export folder
 echo   9  stats    write the --stats dump for an export folder
@@ -275,32 +281,102 @@ exit /b 0
 
 
 rem ---------------------------------------------------------------------------
+rem Build both binaries and ship them to dist\.
+rem
+rem The exes ship from dist\, not from target\: `cargo clean` empties target\,
+rem and `save.bat clean` is a menu entry two rows down. An exe you actually use
+rem should not live somewhere a maintenance command deletes without asking.
+rem
+rem Both are copied in one step because they are one program. The window and the
+rem CLI share the reader, the metrics and the report writer, and a dist\ holding
+rem one of them from Tuesday and the other from Friday is a folder that can
+rem disagree with itself about what a report looks like.
+rem
+rem Unlike telegram_rust's dist\, nothing is written beside these executables --
+rem no session key, no Exports\. See dist\.gitkeep.
 :build
 echo.
-echo === build ===
+echo === build: dist ===
 call :checkcargo
 if errorlevel 1 goto end
+
+rem A running window holds both the linker's output and dist\%EXENAME% open, so
+rem the build fails and then the copy does. Killing it first is not optional.
+rem taskkill exits non-zero when nothing was running, which is the normal case.
+echo [exe]  stop any running instance
+taskkill /F /IM %EXENAME% >nul 2>&1
+if errorlevel 1 (echo        none running) else (echo        stopped)
+
+echo [exe]  cargo build --release
 call :clock TS
 cargo build --release
 if errorlevel 1 (
-  echo [err]  build
+  echo.
+  echo [err]  build failed
   set SAVE_ERROR=1
   goto end
 )
-call :since TS "build"
+call :since TS "release build"
+
+if not exist "dist" mkdir dist
+call :ship "%EXENAME%"
+if errorlevel 1 goto end
+call :ship "%CLINAME%"
+if errorlevel 1 goto end
+
 echo.
-for %%f in ("target\release\tga.exe" "target\release\TelegramAnalyser.exe") do (
-  if exist "%%~f" (
-    for /f "usebackq delims=" %%s in (`powershell -NoProfile -Command "'{0,7:N1} MB' -f ((Get-Item '%%~f').Length/1MB)"`) do echo [size] %%~nxf %%s
-  )
-)
+rem 15 MB of the window is gpui plus gpui-component; the CLI is the same
+rem analyser with the toolkit taken off, which is what the difference between
+rem these two numbers measures.
+call :exesize "%EXENAME%" "  (the window: gpui + gpui-component)"
+call :exesize "%CLINAME%" "  (the same analyser, no toolkit)"
+
+rem The cache, reported where somebody will actually read it. cargo never
+rem garbage-collects target\, and in telegram_rust it reached 45 GB before a
+rem single line of any script mentioned it. A few seconds of scan on the back of
+rem a release build is a fair price; `save.bat clean` is what to do about the
+rem number.
+echo.
+call :dirsize "target" "target        "
 goto end
+
+rem :ship <exe name>  ->  target\release\<exe> into dist\
+:ship
+if not exist "target\release\%~1" (
+  echo [err]  the build reported success but target\release\%~1 is missing
+  set SAVE_ERROR=1
+  exit /b 1
+)
+copy /y "target\release\%~1" "dist\%~1" >nul
+if errorlevel 1 (
+  echo [err]  could not copy %~1 into dist\ -- is it still running?
+  set SAVE_ERROR=1
+  exit /b 1
+)
+exit /b 0
+
+rem :exesize <exe name> <note>
+rem
+rem The name is padded here rather than in the echo, because the two exes differ
+rem by twelve characters and two megabyte figures that do not line up are two
+rem figures nobody compares -- which is the whole reason both are printed.
+:exesize
+if not exist "dist\%~1" exit /b 0
+for /f "usebackq delims=" %%s in (`powershell -NoProfile -Command "'{0,-26}{1,7:N1} MB' -f ('dist\%~1'),((Get-Item 'dist\%~1').Length/1MB)"`) do echo [ok]   %%s%~2
+exit /b 0
 
 
 rem ---------------------------------------------------------------------------
 :runwindow
 echo.
 echo === run ===
+rem **`cargo run`, not `start dist\...`.** Launching the shipped exe was tried
+rem and reverted: `start` inside a batch that has its output redirected does not
+rem detach -- cmd holds on and the action never returns, so `save.bat run` hangs
+rem the terminal until the window is closed by hand. A dev command that blocks
+rem is fine and expected; one that blocks *and* looks like it detached is not.
+rem
+rem To run what `build` shipped, run it: `dist\TelegramAnalyser.exe`.
 call :checkcargo
 if errorlevel 1 goto end
 cargo run -p tga-app --bin TelegramAnalyser

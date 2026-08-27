@@ -27,7 +27,6 @@ use tga_ui::tokens::{rhythm, type_scale, Palette};
 
 use crate::job::{self, Progress, Request, STAGES};
 use crate::open;
-use crate::theme;
 
 pub const TITLE: &str = "Telegram Export Analyser";
 
@@ -36,11 +35,9 @@ const BLURB: &str = "Point this at a finished export. It reads the result.json f
                      is sent anywhere.";
 
 pub struct Shell {
+    /// Dark, and only dark. Kept as a field rather than called at every use so
+    /// the render reads the same as it did when there were two.
     palette: Palette,
-    /// `dark` or `light`. Drives both the window and the report it writes —
-    /// the window is the preview of what comes out, and a light report behind
-    /// a dark window reads as two products.
-    theme_name: &'static str,
     path: Entity<InputState>,
     write_digest: bool,
     embed_fonts: bool,
@@ -68,7 +65,6 @@ impl Shell {
 
         let mut this = Self {
             palette: Palette::dark(),
-            theme_name: "dark",
             path,
             write_digest: true,
             embed_fonts: true,
@@ -208,7 +204,6 @@ impl Shell {
         let request = Request {
             out: folder.join("report.html"),
             folder,
-            theme: self.theme_name.to_string(),
             write_digest: self.write_digest,
             embed_fonts: self.embed_fonts,
         };
@@ -295,15 +290,6 @@ impl Shell {
             cx.notify();
         }
     }
-
-    // -- the options -------------------------------------------------------
-
-    fn set_theme(&mut self, name: &'static str, cx: &mut Context<Self>) {
-        self.theme_name = name;
-        self.palette = Palette::named(name);
-        theme::apply(&self.palette, cx);
-        cx.notify();
-    }
 }
 
 impl Render for Shell {
@@ -368,57 +354,40 @@ impl Render for Shell {
             )
             .child(div().h(px(20.0)))
             // -- the options -----------------------------------------------
+            // No theme control. The design is dark, the report it writes is
+            // dark, and a switch between one thing is a control that only ever
+            // reports its own existence.
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(px(28.0))
-                    .items_start()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(7.0))
-                            .child(eyebrow("Theme", &p))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap(px(0.0))
-                                    .child(theme_cell("Dark", "dark", self.theme_name, &p, cx))
-                                    .child(theme_cell("Light", "light", self.theme_name, &p, cx)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap(px(7.0))
-                            .child(eyebrow("Also", &p))
-                            .child(option_row(
-                                "digest",
-                                "Write the digest an AI needs to map events",
-                                self.write_digest,
-                                !running,
-                                &p,
-                                cx.listener(|this, _, _, cx| {
-                                    this.write_digest = !this.write_digest;
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(option_row(
-                                "fonts",
-                                "Embed the fonts (keeps the report standalone)",
-                                self.embed_fonts,
-                                !running,
-                                &p,
-                                cx.listener(|this, _, _, cx| {
-                                    this.embed_fonts = !this.embed_fonts;
-                                    cx.notify();
-                                }),
-                            )),
-                    ),
+                div().flex().flex_row().gap(px(28.0)).items_start().child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap(px(7.0))
+                        .child(eyebrow("Also", &p))
+                        .child(option_row(
+                            "digest",
+                            "Write the digest an AI needs to map events",
+                            self.write_digest,
+                            !running,
+                            &p,
+                            cx.listener(|this, _, _, cx| {
+                                this.write_digest = !this.write_digest;
+                                cx.notify();
+                            }),
+                        ))
+                        .child(option_row(
+                            "fonts",
+                            "Embed the fonts (keeps the report standalone)",
+                            self.embed_fonts,
+                            !running,
+                            &p,
+                            cx.listener(|this, _, _, cx| {
+                                this.embed_fonts = !this.embed_fonts;
+                                cx.notify();
+                            }),
+                        )),
+                ),
             )
             .child(div().flex_1())
             .child(rule(&p))
@@ -494,31 +463,6 @@ fn done_status(
             format!(", {events} events")
         }
     )
-}
-
-/// One half of the theme switch. Two cells rather than a dropdown: there are
-/// exactly two appearances, and a menu to choose between two things is a menu
-/// too many.
-fn theme_cell(
-    label: &'static str,
-    name: &'static str,
-    current: &'static str,
-    p: &Palette,
-    cx: &mut Context<Shell>,
-) -> gpui::Stateful<gpui::Div> {
-    let on = current == name;
-    div()
-        .id(label)
-        .cursor_pointer()
-        .px(px(14.0))
-        .py(px(7.0))
-        .border_1()
-        .border_color(if on { p.accent } else { p.hairline })
-        .text_size(type_scale::BODY)
-        .line_height(leading(type_scale::BODY, rhythm::LINE_TIGHT))
-        .text_color(if on { p.accent } else { p.muted })
-        .child(label)
-        .on_click(cx.listener(move |this, _, _, cx| this.set_theme(name, cx)))
 }
 
 /// A tick box and its label, on one clickable row.

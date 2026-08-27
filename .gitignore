@@ -20,5 +20,16 @@ report*.html
 # test fails on a fresh clone with "no fixture" rather than with a diff.
 !crates/tga-report/tests/fixture.stats.json
 
+# The built binaries. The folder itself is tracked (dist/.gitkeep) so a fresh
+# clone has somewhere to build into; its contents never are -- a 15 MB exe
+# rebuilt on every release is not something to keep the history of.
+#
+# Note the shape: `/dist/` alone would exclude the directory outright and git
+# would then never look inside it, so the negation below could not re-include
+# anything. `/dist/*` excludes the contents and leaves the directory itself
+# visible, which is what makes `!` work at all.
+/dist/*
+!/dist/.gitkeep
+
 # Local scratch
 *.log

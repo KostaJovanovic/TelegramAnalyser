@@ -216,14 +216,21 @@ pub fn masthead(stats: &Value, classic: bool) -> String {
          <span class=\"found\" id=\"found\" role=\"status\"></span>"
             .to_string()
     };
+    // **The report is dark only, so there is no theme switch.** It survives in
+    // the classic render because that is a byte-for-byte reproduction of
+    // `report.py`, which had one — not because anything here offers a choice.
+    let theme_switch = if classic {
+        "<button class=\"switch\" id=\"theme\">Light</button>"
+    } else {
+        ""
+    };
     format!(
         "<header class=\"masthead\">\
          <p class=\"eyebrow\">Telegram archive</p>\
          <h1>{}</h1>\
          <p class=\"lede\">{} messages across {topics} topic{}, {span}.</p>\
          <nav class=\"toc\">{toc}</nav>\
-         <div class=\"switches\">\
-         <button class=\"switch\" id=\"theme\">Light</button>\
+         <div class=\"switches\">{theme_switch}\
          <button class=\"switch\" id=\"aliases\" aria-pressed=\"false\">Former names</button>\
          <button class=\"switch\" id=\"everyone\" aria-pressed=\"false\">Everyone</button>\
          {find}</div></header>",

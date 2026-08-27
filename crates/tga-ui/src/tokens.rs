@@ -6,12 +6,14 @@
 //! asserts the two never drift, which is the same guard `test_analyser.py`
 //! keeps over the Python pair.
 //!
-//! Swiss/International: black on white, hairline rules, square corners, one
-//! red.
+//! Swiss/International: hairline rules, square corners, one red.
 //!
-//! **Both appearances carry the same keys**, enforced by the type rather than
-//! by a test — a palette is a struct, so a colour that exists in light and not
-//! in dark will not compile.
+//! **Dark only.** The window and the report it writes are one appearance, so
+//! there is one [`Palette`] and no switch. `tga_report::palette` still carries
+//! a light set, and that is not an inconsistency — the *classic* render is a
+//! byte-for-byte reproduction of `report.py`, which had a light theme, and the
+//! parity legs compare its stylesheet character for character. A frozen
+//! reproduction is not a second product.
 
 use gpui::{hsla, Hsla};
 
@@ -24,8 +26,8 @@ pub struct Palette {
     pub fg: Hsla,
     /// Secondary text.
     pub muted: Hsla,
-    /// The 1px rule that does all the dividing. **Pure ink in light, mid grey
-    /// in dark** — a dark theme with black hairlines shows nothing at all.
+    /// The 1px rule that does all the dividing. A **mid grey**, not ink — on a
+    /// near-black page a black hairline shows nothing at all.
     pub hairline: Hsla,
     /// The softer divider.
     pub rule: Hsla,
@@ -73,19 +75,6 @@ fn rgb_to_hsla(r: f32, g: f32, b: f32, a: f32) -> Hsla {
 }
 
 impl Palette {
-    pub fn light() -> Self {
-        Self {
-            bg: hex(0xffffff),
-            fg: hex(0x0a0a0a),
-            muted: hex(0x6b6b6b),
-            hairline: hex(0x0a0a0a),
-            rule: hex(0xe6e6e6),
-            surface: hex(0xf4f4f4),
-            accent: hex(0xe60023),
-            accent_fg: hex(0xffffff),
-        }
-    }
-
     pub fn dark() -> Self {
         Self {
             bg: hex(0x0a0a0a),
@@ -96,16 +85,6 @@ impl Palette {
             surface: hex(0x141414),
             accent: hex(0xff3347),
             accent_fg: hex(0xffffff),
-        }
-    }
-
-    /// Anything but `light` falls back to dark, so a bad name cannot leave the
-    /// window unreadable.
-    pub fn named(name: &str) -> Self {
-        if name == "light" {
-            Self::light()
-        } else {
-            Self::dark()
         }
     }
 }
@@ -152,8 +131,8 @@ mod tests {
     use super::*;
 
     /// The report's own value for a token, as it writes it into the stylesheet.
-    fn from_report(theme: &str, name: &str) -> Hsla {
-        let text = tga_report::palette::token(theme, name);
+    fn from_report(name: &str) -> Hsla {
+        let text = tga_report::palette::token("dark", name);
         hex(u32::from_str_radix(text.trim_start_matches('#'), 16).expect("hex"))
     }
 
@@ -162,64 +141,57 @@ mod tests {
         // The two copies exist because the report must not drag a GPU toolkit
         // into a module whose only job is to write a text file. This is what
         // stops them becoming two designs.
-        for (theme, palette) in [("light", Palette::light()), ("dark", Palette::dark())] {
-            for (name, ours) in [
-                ("bg", palette.bg),
-                ("fg", palette.fg),
-                ("muted", palette.muted),
-                ("hairline", palette.hairline),
-                ("rule", palette.rule),
-                ("surface", palette.surface),
-                ("accent", palette.accent),
-                ("accent_fg", palette.accent_fg),
-            ] {
-                assert_eq!(
-                    ours,
-                    from_report(theme, name),
-                    "{theme}/{name} has drifted from the report's stylesheet"
-                );
-            }
+        let palette = Palette::dark();
+        for (name, ours) in [
+            ("bg", palette.bg),
+            ("fg", palette.fg),
+            ("muted", palette.muted),
+            ("hairline", palette.hairline),
+            ("rule", palette.rule),
+            ("surface", palette.surface),
+            ("accent", palette.accent),
+            ("accent_fg", palette.accent_fg),
+        ] {
+            assert_eq!(
+                ours,
+                from_report(name),
+                "dark/{name} has drifted from the report's stylesheet"
+            );
         }
     }
 
     #[test]
-    fn the_two_appearances_are_genuinely_different() {
-        let (l, d) = (Palette::light(), Palette::dark());
-        assert_ne!(l.bg, d.bg);
-        assert_ne!(l.fg, d.fg);
-        assert_ne!(l.accent, d.accent);
-    }
-
-    #[test]
-    fn a_dark_hairline_is_not_black() {
-        // A dark theme with black hairlines shows nothing at all.
-        let (l, d) = (Palette::light(), Palette::dark());
-        assert_eq!(l.hairline, l.fg, "light hairlines are the ink colour");
+    fn a_dark_hairline_is_neither_the_page_nor_the_text() {
+        // A dark theme with black hairlines shows nothing at all, and one with
+        // white hairlines is a wireframe.
+        let d = Palette::dark();
         assert!(
             d.hairline.l > d.bg.l,
-            "the dark hairline must be lighter than the page"
+            "the hairline must be lighter than the page"
         );
         assert!(d.hairline.l < d.fg.l, "and darker than the text");
     }
 
     #[test]
     fn hex_conversion_leaves_the_greys_achromatic() {
+        // #0a0a0a is achromatic: any saturation here and the whole palette
+        // drifts toward a colour cast.
+        let near_black = hex(0x0a0a0a);
+        assert!(
+            (near_black.l - 10.0 / 255.0).abs() < 1e-3,
+            "got {near_black:?}"
+        );
+        assert!(near_black.s.abs() < 1e-4, "the page gained saturation");
         let white = hex(0xffffff);
         assert!((white.l - 1.0).abs() < 1e-4, "got {white:?}");
-        assert!(white.s.abs() < 1e-4, "white gained saturation: {white:?}");
+        assert!(white.s.abs() < 1e-4);
     }
 
     #[test]
     fn the_accent_really_is_red() {
-        let a = Palette::light().accent;
+        let a = Palette::dark().accent;
         assert!(a.h < 0.03 || a.h > 0.97, "hue was {}", a.h);
         assert!(a.s > 0.9, "saturation was {}", a.s);
-    }
-
-    #[test]
-    fn an_unknown_theme_name_falls_back_rather_than_breaking() {
-        assert_eq!(Palette::named("chartreuse"), Palette::dark());
-        assert_eq!(Palette::named("light"), Palette::light());
     }
 
     #[test]

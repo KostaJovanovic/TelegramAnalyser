@@ -47,7 +47,6 @@ pub enum Progress {
 pub struct Request {
     pub folder: PathBuf,
     pub out: PathBuf,
-    pub theme: String,
     pub write_digest: bool,
     pub embed_fonts: bool,
 }
@@ -121,7 +120,6 @@ fn run(request: Request, tx: UnboundedSender<Progress>) {
         &tga_report::names_from_stats(&stats),
         &notes,
         &tga_report::Options {
-            theme: request.theme.clone(),
             embed_fonts: request.embed_fonts,
             source: SOURCE.to_string(),
             ..Default::default()
@@ -205,7 +203,6 @@ mod tests {
             Request {
                 folder: dir.clone(),
                 out: out.clone(),
-                theme: "dark".into(),
                 write_digest: false,
                 embed_fonts: false,
             },

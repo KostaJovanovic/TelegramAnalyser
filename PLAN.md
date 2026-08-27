@@ -21,7 +21,7 @@ the oracle did not have to expire; see **Verification**.
 save.bat                    # menu; also takes an action as an argument
 save.bat save               # test + commit + push
 save.bat test               # fmt + clippy + every suite
-save.bat build              # release -> target\release\{tga,TelegramAnalyser}.exe
+save.bat build              # release, then both exes into dist\
 save.bat run                # the window
 save.bat report <folder>    # write report.html beside an export
 save.bat oracle             # re-record the Python side for both corpora
@@ -41,11 +41,19 @@ cargo test -p tga-report --test golden          # both goldens, no corpus needed
 cargo test -p tga-metrics --test oracle         # the numbers oracle
 cargo run  -p tga-app --bin TelegramAnalyser    # the window
 
-cargo run -p tga-cli --bin tga -- <folder> [--out P] [--theme dark|light]
-                                           [--digest] [--no-fonts] [--stats P]
-                                           [--notes P] [--classic]
+cargo run -p tga-cli --bin tga -- <folder> [--out P] [--digest] [--no-fonts]
+                                           [--stats P] [--notes P] [--classic]
 cargo run -p tga-cli --bin tga -- --from-stats <stats.json> --out <report.html>
 ```
+
+**`save.bat build` ships to `dist\`**, both binaries from one
+`cargo build --release`. They live there rather than in `target\` because
+`cargo clean` empties `target\` — and `save.bat clean` is a menu entry two rows
+down — and because the window and the CLI are the same reader, the same metrics
+and the same writer: a `dist\` holding one of them from Tuesday and the other
+from Friday is a folder that can disagree with itself about what a report looks
+like. Unlike `telegram_rust`'s `dist\`, nothing is written *beside* these
+executables; see `dist\.gitkeep`.
 
 **`--from-stats` opens no export**, and it exists because the layering already
 made it free: `tga-report` depends on neither the reader nor the metrics, so a
@@ -97,6 +105,27 @@ across all three. Take what it shows. Leave its chrome.
 | the Python app | kept indefinitely, and kept running. |
 | the report | **a faithful port of `report.py` first.** Decided 2026-08-27, and it is what made the HTML checkable: the Python's own `report.html` becomes an oracle exactly as its `stats.json` was. The `_timeline` data surface below is the pass after it. |
 | the window | **in scope, and built.** Decided 2026-08-27 — see phase 4. |
+| appearance | **dark only.** Decided 2026-08-27. One palette in `tga-ui`, one `html.dark` block in the report, no switch in either. See below. |
+
+## Dark only
+
+There is one appearance. `tga-ui` has one `Palette`, the report emits one
+`html.dark` block, and neither offers a switch — a light theme is a second
+design to keep in step, and this one has two colours and a red to keep in step
+already.
+
+**`tga_report::palette` still carries a light set, and that is not a
+leftover.** The *classic* render is a byte-for-byte reproduction of
+`report.py`, which had a theme switch and wrote both blocks, and the parity legs
+compare that stylesheet character for character. A frozen reproduction is not a
+second product; it is the oracle, and it gets to keep whatever the original had.
+`golden-classic.html` pins the difference in both directions.
+
+One thing this had to handle rather than merely delete: the frozen script
+restores a theme from `localStorage` under `tg-report-theme`, and an older
+report may well have written `light` there. With no `html.light` block and no
+switch to get back, restoring it would render a page with no colours at all —
+so the surface script removes the class and forgets the key.
 
 ## What "less cluttered" means
 
@@ -145,6 +174,12 @@ adjacent dL      0.073                0.082     0.06
 end vs surface   2.37:1               2.33:1    2:1
 hue spread       1 degree             1 degree
 ```
+
+`palette::tests` re-derives all four from the hex values rather than restating
+them, so an edit that breaks one fails the suite instead of quietly shipping a
+ramp nobody can read. **Both columns are still checked**, dark-only report or
+not: the light ramp is what the classic render emits, and a ramp the oracle
+carries is a ramp worth keeping correct.
 
 ## Repo shape
 

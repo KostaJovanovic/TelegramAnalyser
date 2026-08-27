@@ -14,25 +14,24 @@
 //! there is nothing to write to. And call it before the first frame, because a
 //! component that has already painted keeps what it was measured with.
 //!
-//! Re-running is free: every write is an assignment, so the theme switch can
-//! rebuild the palette and call this again.
+//! **Dark only**, so this runs once at startup and never again. It is still
+//! written as a function of a `Palette` rather than against constants: the
+//! mapping from *our* token to *their* field is the part worth reading, and
+//! inlining `#0a0a0a` twenty times would bury it.
 
 use gpui::{black, App};
 use tga_ui::tokens::{metrics, type_scale, Palette};
 
 pub fn apply(palette: &Palette, cx: &mut App) {
-    let dark = is_dark(palette);
     let theme = gpui_component::theme::Theme::global_mut(cx);
 
     // **The library branches on `mode`**, not on how light the colours it was
-    // given happen to be. A dark palette under `ThemeMode::Light` gets those
-    // decisions backwards while every colour looks right, which is the hardest
-    // kind of mismatch to see.
-    theme.mode = if dark {
-        gpui_component::theme::ThemeMode::Dark
-    } else {
-        gpui_component::theme::ThemeMode::Light
-    };
+    // given happen to be — icon polarity and a handful of `is_dark()` calls
+    // inside its own components. A dark palette under `ThemeMode::Light` gets
+    // those decisions backwards while every colour looks right, which is the
+    // hardest kind of mismatch to see. There is one appearance here, so this is
+    // a constant rather than a branch.
+    theme.mode = gpui_component::theme::ThemeMode::Dark;
 
     // `metrics::RADIUS` is `px(0.0)` and says why: square corners are the
     // design, not a default. The library ships 6px and 8px, and a rounded input
@@ -54,9 +53,10 @@ pub fn apply(palette: &Palette, cx: &mut App) {
     theme.foreground = palette.fg;
 
     // **Borders: `hairline`, not `rule`.** These are not interchangeable —
-    // `hairline` is pure ink in light and a mid grey in dark, and it is what
-    // `components::rule()` paints. Giving the field the soft grey would leave
-    // it looking faded next to our own lines.
+    // `hairline` is the mid grey `components::rule()` paints, the structural
+    // 1px line the whole layout is divided by; `rule` is the softer divider
+    // used *inside* a panel. Giving the field the soft grey would leave it
+    // looking faded next to our own lines.
     theme.border = palette.hairline;
     theme.input = palette.hairline;
     theme.title_bar = palette.bg;
@@ -106,22 +106,9 @@ pub fn apply(palette: &Palette, cx: &mut App) {
     // accent is for.
     theme.progress_bar = palette.accent;
 
-    // A scrim dims what is behind it, so it is ink in both appearances — `fg`
-    // would paint a near-white veil over the dark theme. Dark needs the heavier
-    // value because there is less light to take away.
-    theme.overlay = black().alpha(if dark { 0.6 } else { 0.35 });
-}
-
-/// Which appearance this palette is.
-///
-/// [`Palette`] carries no field naming its own appearance, so the honest test
-/// is equality against the two that exist rather than a lightness threshold,
-/// which would guess wrong the moment a token moves. Anything matching neither
-/// falls to dark — the same fallback `Palette::named` takes, and for the same
-/// reason: a wrong guess costs a mismatched icon polarity, while the
-/// alternative risks a window nobody can read.
-fn is_dark(palette: &Palette) -> bool {
-    *palette != Palette::light()
+    // A scrim dims what is behind it, so it is ink rather than `fg` — the
+    // latter would paint a near-white veil over the page.
+    theme.overlay = black().alpha(0.6);
 }
 
 #[cfg(test)]
@@ -129,15 +116,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_appearance_is_recognised_as_itself() {
-        assert!(!is_dark(&Palette::light()));
-        assert!(is_dark(&Palette::dark()));
-    }
-
-    #[test]
-    fn a_palette_matching_neither_appearance_falls_back_to_dark() {
-        let mut odd = Palette::light();
-        odd.accent = Palette::dark().accent;
-        assert!(is_dark(&odd));
+    fn the_palette_this_is_handed_really_is_the_dark_one() {
+        // `apply` writes `ThemeMode::Dark` as a constant rather than deriving it
+        // from the colours, which is only correct while there is one appearance.
+        // This is the assertion that would fail if a light palette ever came
+        // back — the library uses `mode` for icon polarity, so a mismatch looks
+        // right and behaves wrong.
+        let p = Palette::dark();
+        assert!(p.bg.l < p.fg.l, "the page must be darker than the ink");
+        assert!(p.hairline.l > p.bg.l, "and the hairline visible against it");
     }
 }

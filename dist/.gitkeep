@@ -1,0 +1,29 @@
+The release binaries live here: `save.bat build` copies them out of
+target\release\.
+
+    TelegramAnalyser.exe    the window
+    tga.exe                 the same program with the window taken off
+
+They sit in the repo rather than in target\ for two reasons.
+
+**target\ is a build directory, and `cargo clean` empties it.** An exe you
+actually use should not live somewhere a maintenance command deletes without
+asking. `save.bat clean` does exactly that, and it should not cost you the
+build.
+
+**The two ship together, from one `cargo build --release`.** The window and the
+CLI are the same reader, the same metrics and the same report writer; a dist\
+holding one of them from Tuesday and the other from Friday is a folder that can
+disagree with itself about what a report looks like. Copying both out in one
+step is what stops that.
+
+Unlike the exporter's dist\, **nothing is written beside these executables.**
+That app keeps a Telegram session key — a bearer credential — next to its own
+exe, which is what makes its dist\ portable and what makes committing its
+contents a security problem. This one holds no credential, opens no socket and
+writes nothing beside itself: `report.html` goes beside the *export*, and the
+digest goes into that export's analysis\ folder. The folder is still gitignored,
+because a 15 MB binary rebuilt on every release is not something to keep the
+history of.
+
+Everything in here except this file is gitignored.
