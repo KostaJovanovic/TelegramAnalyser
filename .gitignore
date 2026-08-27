@@ -1,0 +1,24 @@
+/target/
+
+# The oracle. `reference/*.stats.json` is dumped by the Python analyser from a
+# real export, and it carries chat content verbatim -- `superlatives` quotes
+# message text, `people` and `graph` carry everyone's names. Committing it
+# publishes other people's conversation, and git keeps it for good.
+#
+# Same rule as telegram_rust's /reference/, and for the same reason: without
+# it the corpus tests skip, and that skip has to be loud.
+/reference/
+
+# Reports written while testing. Each is a self-contained megabyte of somebody
+# else's archive.
+report*.html
+*.stats.json
+
+# ...except the golden's input, which is the one stats dump that is safe to
+# commit: `crates/tga-report/tests/fixture.stats.json` is hand-written and
+# names nobody. Without this line the rule above swallows it and the golden
+# test fails on a fresh clone with "no fixture" rather than with a diff.
+!crates/tga-report/tests/fixture.stats.json
+
+# Local scratch
+*.log

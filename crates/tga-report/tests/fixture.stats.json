@@ -1,0 +1,448 @@
+{
+ "activity": {
+  "active_days": 5,
+  "busiest_day": {
+   "date": "2025-01-03",
+   "messages": 9
+  },
+  "empty": false,
+  "first": "2025-01-01",
+  "hour_weekday": [
+   [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0],
+   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0],
+   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+   [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  ],
+  "last": "2025-01-07",
+  "mean_per_active_day": 4.4,
+  "per_day": [
+   ["2025-01-01", 3],
+   ["2025-01-02", 4],
+   ["2025-01-03", 9],
+   ["2025-01-04", 0],
+   ["2025-01-05", 0],
+   ["2025-01-06", 3],
+   ["2025-01-07", 3]
+  ],
+  "per_day_by_person": {
+   "user1": {
+    "2025-01-01": 2,
+    "2025-01-03": 7,
+    "2025-01-06": 3
+   },
+   "user2": {
+    "2025-01-01": 1,
+    "2025-01-02": 4,
+    "2025-01-03": 2,
+    "2025-01-07": 3
+   }
+  },
+  "per_day_by_topic": {
+   "0": {
+    "2025-01-01": 3,
+    "2025-01-02": 4,
+    "2025-01-03": 9
+   },
+   "1": {
+    "2025-01-06": 3,
+    "2025-01-07": 3
+   }
+  },
+  "per_hour": [1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 2, 0, 3, 0, 0, 5, 0, 0, 0, 0, 1],
+  "per_month": [
+   ["2025-01", 22]
+  ],
+  "per_weekday": [3, 4, 9, 2, 3, 0, 1],
+  "quietest": {
+   "days": 2,
+   "from": "2025-01-04",
+   "to": "2025-01-05"
+  },
+  "span_days": 7
+ },
+ "awards": [
+  {
+   "key": "user2",
+   "messages": 10,
+   "name": "Bob & Co <the second>",
+   "note": "of their messages between midnight and 5am",
+   "title": "Night owl",
+   "value": "10%"
+  },
+  {
+   "key": "user1",
+   "messages": 12,
+   "name": "Ana",
+   "note": "words per message on average",
+   "title": "Writes longest",
+   "value": "8.5"
+  }
+ ],
+ "churn": {
+  "active": [2],
+  "announced_joins": [2],
+  "announced_leaves": [1],
+  "events": [
+   {
+    "count": 2,
+    "date": "2025-01-01 09:00",
+    "kind": "join",
+    "names": ["Ana", "Bob & Co <the second>"],
+    "who": "Ana"
+   }
+  ],
+  "months": ["2025-01"],
+  "roster_dated": 0,
+  "roster_joins": [0],
+  "roster_size": 0
+ },
+ "content": {
+  "domains": [
+   ["example.com", 4],
+   ["telegram.org", 1]
+  ],
+  "edited": 2,
+  "emoji": [
+   ["\ud83d\ude02", 6],
+   ["\u2764", 3]
+  ],
+  "emoji_by_person": {
+   "user1": [["\ud83d\ude02", 4]]
+  },
+  "emoji_total": 9,
+  "forward_sources": [
+   ["Some Channel", 2]
+  ],
+  "forwards": 2,
+  "hashtags": [
+   ["kolab", 3]
+  ],
+  "lengths": [
+   ["no text", 4],
+   ["1-2", 3],
+   ["3-5", 5],
+   ["6-10", 4],
+   ["11-20", 3],
+   ["21-50", 2],
+   ["51-100", 1],
+   ["101+", 0]
+  ],
+  "links_total": 5,
+  "media_bytes": 1940744,
+  "media_kinds": [
+   {
+    "bytes": 1440744,
+    "kind": "photo",
+    "label": "Photos",
+    "saved": 3,
+    "sent": 4
+   },
+   {
+    "bytes": 500000,
+    "kind": "voice_message",
+    "label": "Voice notes",
+    "saved": 1,
+    "sent": 1
+   }
+  ],
+  "media_messages": 5,
+  "media_saved": 4,
+  "mean_words": 6.0,
+  "mentions": [
+   ["@ana", 2]
+  ],
+  "messages": 22,
+  "stickers": [
+   ["\ud83c\udf89", 2]
+  ],
+  "total_chars": 640,
+  "total_words": 108,
+  "with_text": 18
+ },
+ "conversation": {
+  "edges": [
+   {
+    "count": 5,
+    "from": "user1",
+    "from_name": "Ana",
+    "to": "user2",
+    "to_name": "Bob & Co <the second>"
+   },
+   {
+    "count": 3,
+    "from": "user2",
+    "from_name": "Bob & Co <the second>",
+    "to": "user1",
+    "to_name": "Ana"
+   }
+  ],
+  "fastest": [
+   {
+    "key": "user1",
+    "median": 42,
+    "name": "Ana",
+    "replies": 6
+   },
+   {
+    "key": "user2",
+    "median": 4200,
+    "name": "Bob & Co <the second>",
+    "replies": 5
+   }
+  ],
+  "latency_cap": 86400,
+  "latency_counted": 11,
+  "latency_median": 300,
+  "latency_p90": 5400,
+  "orphan_replies": 1,
+  "reaction_edges": [
+   {
+    "count": 2,
+    "from": "user2",
+    "from_name": "Bob & Co <the second>",
+    "to": "user1",
+    "to_name": "Ana"
+   }
+  ],
+  "replies": 8,
+  "reply_share": 0.36363636363636365,
+  "self_replies": 1,
+  "session_gap": 1800,
+  "session_longest": null,
+  "session_median_messages": 4,
+  "session_median_voices": 2,
+  "sessions": 5,
+  "slowest": [
+   {
+    "key": "user2",
+    "median": 4200,
+    "name": "Bob & Co <the second>",
+    "replies": 5
+   }
+  ],
+  "starters": [
+   {
+    "count": 3,
+    "key": "user1",
+    "name": "Ana"
+   },
+   {
+    "count": 2,
+    "key": "user2",
+    "name": "Bob & Co <the second>"
+   }
+  ]
+ },
+ "export": {
+  "members_count": null,
+  "messages": 24,
+  "name": "Fixture Archive",
+  "root": "C:\\fixture",
+  "roster_complete": false,
+  "service_messages": 2,
+  "topics": 2
+ },
+ "graph": {
+  "edges": [
+   {
+    "a": "user1",
+    "b": "user2",
+    "weight": 10
+   }
+  ],
+  "hidden": 1,
+  "nodes": [
+   {
+    "degree": 10,
+    "key": "user1",
+    "messages": 12,
+    "size": 1.0,
+    "x": 0.0,
+    "y": 1.0
+   },
+   {
+    "degree": 10,
+    "key": "user2",
+    "messages": 10,
+    "size": 0.8333333333333334,
+    "x": 1.0,
+    "y": 0.0
+   }
+  ]
+ },
+ "people": {
+  "known_members": 3,
+  "roster_complete": false,
+  "rows": [
+   {
+    "aliases": [],
+    "avg_words": 8.5,
+    "by_topic": {
+     "0": 9,
+     "1": 3
+    },
+    "chars": 380,
+    "edited": 1,
+    "first": "2025-01-01T09:00:00",
+    "forwards": 1,
+    "hours": [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "joined": null,
+    "key": "user1",
+    "last": "2025-01-06T15:00:00",
+    "media": 3,
+    "messages": 12,
+    "name": "Ana",
+    "reacted_messages": 3,
+    "reactions_received": 7,
+    "replies": 5,
+    "role": "creator",
+    "share": 0.5454545454545454,
+    "votes_given": 2,
+    "words": 102
+   },
+   {
+    "aliases": ["Bobby", "B."],
+    "avg_words": 4.0,
+    "by_topic": {
+     "0": 7,
+     "1": 3
+    },
+    "chars": 260,
+    "edited": 1,
+    "first": "2025-01-01T10:00:00",
+    "forwards": 1,
+    "hours": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 5, 0, 0, 0, 0, 1],
+    "joined": null,
+    "key": "user2",
+    "last": "2025-01-07T18:00:00",
+    "media": 2,
+    "messages": 10,
+    "name": "Bob & Co <the second>",
+    "reacted_messages": 2,
+    "reactions_received": 4,
+    "replies": 3,
+    "role": "member",
+    "share": 0.45454545454545453,
+    "votes_given": 1,
+    "words": 40
+   },
+   {
+    "aliases": [],
+    "avg_words": 0.0,
+    "by_topic": {},
+    "chars": 0,
+    "edited": 0,
+    "first": null,
+    "forwards": 0,
+    "hours": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "joined": null,
+    "key": "user3",
+    "last": null,
+    "media": 0,
+    "messages": 0,
+    "name": "Never Spoke",
+    "reacted_messages": 0,
+    "reactions_received": 0,
+    "replies": 0,
+    "role": "member",
+    "share": 0.0,
+    "silent": true,
+    "votes_given": 0,
+    "words": 0
+   }
+  ],
+  "silent_members": 1,
+  "speakers": 2,
+  "top3_share": 1.0,
+  "total_messages": 22,
+  "votes_anonymous": 8,
+  "votes_named": 3,
+  "votes_total": 11
+ },
+ "renamed": [
+  {
+   "aliases": ["Bobby", "B."],
+   "name": "Bob & Co <the second>"
+  }
+ ],
+ "streak": {
+  "days": 3,
+  "ended": "2025-01-03",
+  "name": "Ana"
+ },
+ "superlatives": [
+  {
+   "date": "2025-01-03 12:00",
+   "id": 17,
+   "text": "the one everybody answered",
+   "title": "Most reacted to",
+   "topic": 0,
+   "unit": "reactions",
+   "value": 7,
+   "who": "Ana"
+  },
+  {
+   "date": "2025-01-03 18:00",
+   "id": 19,
+   "text": "(photo)",
+   "title": "Largest file",
+   "topic": 0,
+   "unit": "",
+   "value": "1.4 MB",
+   "who": "Bob & Co <the second>"
+  },
+  {
+   "date": "2025-01-03",
+   "id": null,
+   "text": "",
+   "title": "Busiest day",
+   "topic": null,
+   "unit": "messages",
+   "value": 9,
+   "who": ""
+  },
+  {
+   "date": "2025-01-04 to 2025-01-05",
+   "id": null,
+   "text": "",
+   "title": "Longest silence",
+   "topic": null,
+   "unit": "days",
+   "value": 2,
+   "who": ""
+  }
+ ],
+ "topics": [
+  {
+   "avg_words": 7.1,
+   "first": "2025-01-01",
+   "index": 0,
+   "last": "2025-01-03",
+   "media": 4,
+   "messages": 16,
+   "name": "General",
+   "reactions": 9,
+   "replies": 6,
+   "top": "Ana",
+   "voices": 2,
+   "words": 84
+  },
+  {
+   "avg_words": 4.0,
+   "first": "2025-01-06",
+   "index": 1,
+   "last": "2025-01-07",
+   "media": 1,
+   "messages": 6,
+   "name": "\u0107askanje",
+   "reactions": 2,
+   "replies": 2,
+   "top": "Bob & Co <the second>",
+   "voices": 2,
+   "words": 24
+  }
+ ]
+}

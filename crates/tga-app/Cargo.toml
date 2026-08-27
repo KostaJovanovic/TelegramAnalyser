@@ -1,0 +1,41 @@
+[package]
+name = "tga-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Telegram export analyser."
+
+[[bin]]
+name = "TelegramAnalyser"
+path = "src/main.rs"
+
+[dependencies]
+tga-ui = { path = "../tga-ui" }
+tga-read = { path = "../tga-read" }
+tga-metrics = { path = "../tga-metrics" }
+tga-notes = { path = "../tga-notes" }
+tga-report = { path = "../tga-report" }
+
+gpui = { workspace = true }
+
+# Pinned exactly, like `gpui`, and for the same reason: it is pre-1.0, its
+# README suggests `version = "*"`, and a caret lets a routine `cargo update`
+# move it with no code change of ours.
+#
+# It is here for **one control**: the path field. Everything else the window
+# paints -- rules, tick boxes, the bar, the buttons -- is `tga-ui`, and the
+# folder picker is gpui's own `prompt_for_paths`. A single-line text field with
+# a caret, a selection and a clipboard is the one piece where hand-rolling
+# produces something visibly worse than the borrowed part, and pasting a path
+# copied out of Explorer is how this window is actually used.
+gpui-component = "=0.5.1"
+
+# The progress channel. `std::sync::mpsc`'s receiver can only be *polled*, and
+# polling it from `render` means nothing appears until some unrelated input
+# causes a frame -- which the user experiences as having to move the mouse to
+# make the app work. This one can be awaited on GPUI's foreground executor,
+# which is what lets the worker mark the window dirty. Same lesson, and the same
+# fix, as `tgx-app/src/bridge.rs`.
+futures = "0.3"
+anyhow = { workspace = true }

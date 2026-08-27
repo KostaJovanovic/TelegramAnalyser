@@ -1,0 +1,25 @@
+[package]
+name = "tga-report"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The ramp, the SVG marks, and the one HTML file."
+
+# **No `tga-read` and no `tga-metrics`.** The writer renders from the metrics
+# structure alone -- a `serde_json::Value` of exactly the shape `--stats` dumps
+# -- so a recorded fixture replays through it with no export on disk. That is
+# what makes `tests/golden.rs` and `tests/parity.rs` possible, and it is the
+# same property that carries `tgx-html`'s parity leg in the exporter. Breaking
+# it costs both.
+[dependencies]
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tga-notes = { path = "../tga-notes" }
+
+[dev-dependencies]
+# `tests/parity.rs`'s third leg loads `tests/synthetic/events.json` through the
+# real loader rather than hand-building a `Vec<Event>`, so the annotation layer
+# is under the oracle too and not just the writer.
+serde_json = { workspace = true }
+chrono = { workspace = true }
