@@ -15,6 +15,13 @@
 //! **The skip is loud.** `TGA_REQUIRE_CORPUS=1` turns a missing corpus into a
 //! failure. A corpus test that quietly passes having compared nothing is worse
 //! than no test, because it reports as coverage.
+//!
+//! **Two lists say what is not compared, and neither is a place to hide a
+//! difference.** `EXCLUDED` below is per field, for the two values the port
+//! reproduces differently on purpose. `tga_metrics::ADDED` is per branch, for
+//! figures the Python analyser never computed at all — an oracle can only check
+//! what both sides claim to do, and the alternative to naming those is either
+//! deleting them or reporting every one as a failure.
 
 use std::path::{Path, PathBuf};
 
@@ -93,6 +100,16 @@ fn normalised(path: &str) -> String {
     out
 }
 
+/// Whether a path sits inside a branch declared in `tga_metrics::ADDED`.
+///
+/// Matched on the first segment, so the whole branch is out of the diff rather
+/// than each of its keys needing its own entry. The check is anchored — a
+/// branch named `dynamics` must not also silence `dynamics_extra`.
+fn is_added(path: &str) -> bool {
+    let head = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    tga_metrics::ADDED.contains(&head)
+}
+
 fn compare(a: &Value, b: &Value, path: &str, out: &mut Vec<String>) {
     if out.len() > 40 || EXCLUDED.contains(&normalised(path).as_str()) {
         return;
@@ -103,10 +120,14 @@ fn compare(a: &Value, b: &Value, path: &str, out: &mut Vec<String>) {
             keys.sort();
             keys.dedup();
             for key in keys {
+                let here = format!("{path}/{key}");
                 match (x.get(key), y.get(key)) {
-                    (Some(l), Some(r)) => compare(l, r, &format!("{path}/{key}"), out),
-                    (None, _) => out.push(format!("{path}/{key}: only in rust")),
-                    (_, None) => out.push(format!("{path}/{key}: only in python")),
+                    (Some(l), Some(r)) => compare(l, r, &here, out),
+                    // Only a *declared* addition may be Rust-only. Anything
+                    // else is the port having grown a key nobody compared.
+                    (None, _) if is_added(&here) => {}
+                    (None, _) => out.push(format!("{here}: only in rust")),
+                    (_, None) => out.push(format!("{here}: only in python")),
                 }
             }
         }
@@ -172,18 +193,36 @@ fn check(corpus: &Corpus) {
     branches.sort();
     branches.dedup();
     for branch in &branches {
+        if tga_metrics::ADDED.contains(&branch.as_str()) {
+            // Declared Rust-only. It must be here, and it must *not* be on the
+            // Python side: a name that turns up on both is a branch the two
+            // implementations are now supposed to agree on, and carving it out
+            // of the diff would stop the comparison without saying so.
+            assert!(
+                ours.get(branch.as_str()).is_some(),
+                "{}: branch {branch} is declared in ADDED but was not computed",
+                corpus.name
+            );
+            assert!(
+                python.get(branch.as_str()).is_none(),
+                "{}: branch {branch} is declared Rust-only but the Python dump has it too \
+                 — drop it from ADDED so the diff covers it",
+                corpus.name
+            );
+            continue;
+        }
         assert!(
             python.get(branch.as_str()).is_some() && ours.get(branch.as_str()).is_some(),
             "{}: branch {branch} is on one side only",
             corpus.name
         );
     }
+    let expected = tga_metrics::ALL_BRANCHES.len() + tga_metrics::ADDED.len();
     assert_eq!(
         branches.len(),
-        tga_metrics::ALL_BRANCHES.len(),
-        "{}: expected {} branches, found {}",
+        expected,
+        "{}: expected {expected} branches, found {}",
         corpus.name,
-        tga_metrics::ALL_BRANCHES.len(),
         branches.len()
     );
 

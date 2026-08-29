@@ -15,6 +15,16 @@
 //! silence, an alias list, a non-ASCII topic name, a superlative whose value is
 //! a string rather than a count, and an export with no roster dates.
 //!
+//! **One value in it is deliberately not what the analyser would emit.** The
+//! `dynamics.answer.minimum` floor is 3 here and 20 in real life: on a
+//! 22-message fixture every hour is under 20, so the report would render only
+//! the "not enough replies" branch and leave the chart, the median column and
+//! the em-dash for a thin hour uncovered. The floor is a property of the
+//! recorded dump rather than of the writer, which is what makes it fair to vary
+//! — and two figures the fixture's seven-day archive genuinely cannot reach,
+//! a dormant person and a returning one, are covered by `lib.rs`'s own tests
+//! instead of by distorting it further.
+//!
 //! The fonts are **not** embedded in the golden. Three base64'd faces are
 //! ~270 KB of noise in a committed file and they are already covered by
 //! `assets::tests`; leaving them out keeps the golden readable in a diff, which
@@ -179,6 +189,12 @@ fn the_surface_adds_and_the_classic_path_stays_exactly_as_it_was() {
         ("the `who` line", "<p class=\"who\">"),
         ("the tag line", "<p class=\"tags\">"),
         ("a shape-coded marker", "<g class=\"ev k"),
+        // The `dynamics` branch has no Python counterpart at all, so this
+        // section is the one place where a leak would not merely change the
+        // classic document but put a figure in it that no oracle has ever
+        // seen. Both the section and its nav entry are checked.
+        ("the between-people section", "<section id=\"between\">"),
+        ("its nav entry", "href=\"#between\""),
     ];
 
     let classic = render(true);
@@ -298,6 +314,32 @@ fn the_golden_exercises_the_cases_it_was_built_for() {
         (
             "the streak",
             "Longest unbroken run of days posted on: Ana, 3 days",
+        ),
+        // -- the `dynamics` branch ------------------------------------------
+        //
+        // The fixture lowers `answer.minimum` to 3 on purpose. The real figure
+        // is 20, which on a 22-message fixture would leave every hour under the
+        // floor and render only the "not enough replies" branch — so the chart,
+        // the median column and the em-dash for a thin hour would all go
+        // uncovered. Lowering the floor is a property of the recorded dump, not
+        // of the writer, which is what makes it a fair thing to vary here.
+        (
+            "a correspondent pair",
+            "Ana &amp; Bob &amp; Co &lt;the second&gt;",
+        ),
+        ("both directions of a pair", "5 \u{2194} 3"),
+        ("an hour that met the floor", "<td>2 min</td>"),
+        ("an hour that did not", "<td>&#8212;</td>"),
+        ("the chain-length buckets", " chains\""),
+        // The heading rather than a bar: the fixture is a single month, so
+        // `returning` is 0 by construction — nobody can come back in the first
+        // month — and `columns` draws no rect for a zero. That absence is the
+        // correct rendering and the chart is still there around it.
+        ("the month-over-month chart", "<h3>Who came back</h3>"),
+        ("nobody having gone quiet", "posted one in its last month"),
+        (
+            "dormancy measured against the archive",
+            "7 Jan 2025, the last day",
         ),
     ] {
         assert!(html.contains(needle), "the golden lost {what}: {needle:?}");

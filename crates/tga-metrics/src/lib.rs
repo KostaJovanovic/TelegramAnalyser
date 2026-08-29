@@ -17,6 +17,7 @@
 pub mod activity;
 pub mod content;
 pub mod conversation;
+pub mod dynamics;
 pub mod extras;
 pub mod graph;
 pub mod identity;
@@ -35,6 +36,23 @@ pub use identity::{People, Person};
 /// listed here is missing from either side, and reports the rest as outstanding
 /// rather than silently ignoring them.
 pub const IMPLEMENTED: &[&str] = ALL_BRANCHES;
+
+/// Branches this analyser computes that the Python original never did.
+///
+/// **This is the list PLAN.md said would end the oracle, made survivable.** The
+/// stats diff only means anything where the two implementations are supposed to
+/// agree; the moment one computes something the other never did, a difference
+/// stops being evidence of a bug. Naming those branches here keeps the
+/// distinction a declaration rather than a judgement call — `tests/oracle.rs`
+/// allows a branch listed here to be Rust-only, and **requires** it to be
+/// absent from the Python dump, so a name that ever appears on both sides fails
+/// the suite instead of quietly stopping being compared. Everything not listed
+/// is still diffed character for character.
+///
+/// The same list lives in `tools/diff_stats.py`, which does the comparison from
+/// outside. Adding to one without the other is how the two harnesses come to
+/// disagree about what is being checked.
+pub const ADDED: &[&str] = &["dynamics"];
 
 /// Every branch the Python analyser emits, in the order `metrics/__init__.py`
 /// builds them. The difference against [`IMPLEMENTED`] is the work left.
@@ -104,6 +122,10 @@ pub fn analyse(export: &Export) -> (Value, People) {
     out.insert("churn".into(), extras::churn(export, &who, &acts));
     out.insert("conversation".into(), talk);
     out.insert("graph".into(), net);
+    // The one branch with no counterpart in the Python analyser. See `ADDED`:
+    // it is declared rather than discovered, so the oracle goes on comparing
+    // everything above it instead of failing on a name it has never seen.
+    out.insert("dynamics".into(), dynamics::compute(export, &who));
 
     let mut renamed: Vec<&Person> = who.renamed().collect();
     renamed.sort_by_key(|p| p.name.to_lowercase());

@@ -36,6 +36,21 @@ EXCLUDED = {
     "churn/events[]/names[]": "a null member — see below",
 }
 
+#: Branches the Rust analyser computes that the Python original never did.
+#: Kept in step with `tga_metrics::ADDED`; the Rust-side `tests/oracle.rs` reads
+#: that constant and this file has to be told separately, so a name added to one
+#: and not the other makes the two harnesses disagree about what is checked.
+#:
+#: An oracle can only compare what both sides claim to do. Without this list the
+#: only options for a figure the rewrite added are deleting it or reporting it
+#: as a failure on every run, and the second teaches everyone to ignore the
+#: output. A branch here is reported as such rather than silently dropped, and
+#: it is a failure if the Python side ever grows one of the same name -- at that
+#: point the two are supposed to agree and the carve-out is hiding a real diff.
+ADDED = {
+    "dynamics": "correspondent pairs, answer-by-hour, tenure, retention, reply depth",
+}
+
 EXCLUSION_NOTE = """\
      graph node coordinates are 220 iterations of Fruchterman-Reingold, and
      the two implementations disagree in the third decimal on a 28-node graph.
@@ -110,12 +125,28 @@ def main(argv: list[str]) -> int:
         print(f"       {field}  --  {why}")
     print(EXCLUSION_NOTE)
     print()
+    if ADDED:
+        print("     computed here and not by the Python analyser, so not compared:")
+        for branch, what in sorted(ADDED.items()):
+            print(f"       {branch}  --  {what}")
+        print()
 
     branches = sorted(set(python_side) | set(rust_side))
     failures = 0
     outstanding: list[str] = []
+    added: list[str] = []
 
     for branch in branches:
+        if branch in ADDED:
+            if branch in python_side:
+                print(f"FAIL {branch}: declared Rust-only, but the Python dump has it too")
+                failures += 1
+            elif branch not in rust_side:
+                print(f"FAIL {branch}: declared in ADDED but the Rust dump does not have it")
+                failures += 1
+            else:
+                added.append(branch)
+            continue
         if branch not in rust_side:
             outstanding.append(branch)
             continue
@@ -135,12 +166,17 @@ def main(argv: list[str]) -> int:
 
     if outstanding:
         print(f"\n     not ported yet: {', '.join(outstanding)}")
+    if added:
+        print(f"\n     not compared, no Python counterpart: {', '.join(added)}")
     print()
     if failures:
         print(f"{failures} branch(es) differ")
         return 1
-    done = len(branches) - len(outstanding)
-    print(f"{done}/{len(branches)} branches match")
+    # `added` comes out of the denominator as well as the numerator. Counting a
+    # branch nothing compared towards "branches match" is the one number in this
+    # output somebody would quote.
+    compared = len(branches) - len(outstanding) - len(added)
+    print(f"{compared}/{len(branches) - len(added)} branches match")
     return 0
 
 

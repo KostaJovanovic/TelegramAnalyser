@@ -627,12 +627,21 @@ pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) ->
     );
 
     let body = format!(
-        "{}{}{}{}{}{}{}{}</section>{}{}{}",
+        "{}{}{}{}{}{}{}{}{}</section>{}{}{}",
         sections::masthead(stats, classic),
         sections::timeline(stats, notes, names, classic),
         sections::rhythm(stats),
         sections::people(stats, classic),
         sections::conversation(stats, names),
+        // The `dynamics` branch, and the only section with no counterpart in
+        // `report.py`. Behind `classic` like every other phase-5 addition, so
+        // the parity legs go on diffing two documents that are supposed to be
+        // the same one — see `Options::classic`.
+        if classic {
+            String::new()
+        } else {
+            sections::between(stats)
+        },
         sections::said(stats),
         // The churn section's heading is written here rather than inside
         // `churn`, because that function returns nothing at all for an export
@@ -815,6 +824,94 @@ mod tests {
         assert!(html.contains("html.dark{"));
         assert!(html.contains("html.light{"));
         assert!(html.contains("id=\"theme\""));
+    }
+
+    /// A `dynamics` branch whose people have stopped posting.
+    ///
+    /// The golden fixture cannot reach this: its archive is seven days long, so
+    /// nobody in it can be thirty days dormant and the section correctly renders
+    /// the "everybody posted in the last month" line instead. The populated
+    /// table is real markup and needs a case of its own.
+    fn drifted() -> Value {
+        let mut stats = bare();
+        stats["dynamics"] = json!({
+            "empty": false,
+            "pairs": { "rows": [], "shown": 0, "mutual": 0, "one_way": 0, "directed": 0 },
+            "answer": {
+                "counts": vec![0; 24], "medians": vec![0; 24],
+                "counted": 0, "minimum": 20, "cap": 86400,
+                "fastest_hour": Value::Null, "slowest_hour": Value::Null,
+            },
+            "tenure": {
+                "as_of": "2025-06-30", "active": 0, "fading": 1, "gone": 1,
+                "active_within": 30, "fading_within": 90,
+                "rows": [
+                    { "key": "user1", "name": "Ana", "messages": 400,
+                      "first": "2025-01-01", "last": "2025-05-20", "span_days": 140,
+                      "active_days": 40, "density": 0.2857142857142857,
+                      "dormant_days": 41, "status": "fading" },
+                    { "key": "user2", "name": "Bob & Co <the second>", "messages": 12,
+                      "first": "2025-01-01", "last": "2025-01-04", "span_days": 4,
+                      "active_days": 2, "density": 0.5,
+                      "dormant_days": 177, "status": "gone" },
+                ],
+            },
+            "retention": {
+                "months": [], "active": [], "new": [], "returning": [], "lost": [],
+                "people": 2, "kept_mean": 0.0, "months_counted": 0,
+            },
+            "depth": {
+                "buckets": [], "cap": 8, "chained": 0, "max": 0,
+                "median": 0, "mean": 0.0, "longest": Value::Null,
+            },
+        });
+        stats
+    }
+
+    #[test]
+    fn the_people_who_stopped_posting_are_ranked_by_the_silence() {
+        let html = render(&drifted(), &Names::new(), &Notes::default(), &options());
+        // Longest silence first, which is the one ordering the People table
+        // cannot give — it ranks by message count, and there Ana comes first.
+        let bob = html.find("Bob &amp; Co").expect("the quiet one is listed");
+        let ana = html.find(">Ana<").expect("the fading one is listed");
+        assert!(
+            bob < ana,
+            "the table is ranked by dormancy, not by messages"
+        );
+        assert!(html.contains("<td class=\"n\">177</td>"));
+        assert!(html.contains("30 Jun 2025, the last day in this archive"));
+        // Escaped like every other name that came out of an export.
+        assert!(!html.contains("Bob & Co <the second>"));
+    }
+
+    #[test]
+    fn a_dynamics_branch_never_reaches_the_classic_render() {
+        // The whole point of the flag: this branch has no Python counterpart,
+        // so nothing in the parity harness would notice it arriving.
+        let html = render(
+            &drifted(),
+            &Names::new(),
+            &Notes::default(),
+            &Options {
+                classic: true,
+                ..options()
+            },
+        );
+        assert!(!html.contains("id=\"between\""));
+        assert!(!html.contains("#between"));
+        assert!(!html.contains("Gone quiet"));
+    }
+
+    #[test]
+    fn a_report_rendered_from_a_dump_without_dynamics_is_still_whole() {
+        // Every `--from-stats` dump recorded before the branch existed has this
+        // shape, and a re-render of one must not lose a section or a nav entry
+        // it never had.
+        let html = render(&bare(), &Names::new(), &Notes::default(), &options());
+        assert!(!html.contains("id=\"between\""));
+        assert!(!html.contains("#between"));
+        assert!(html.ends_with("</body></html>\n"));
     }
 
     #[test]

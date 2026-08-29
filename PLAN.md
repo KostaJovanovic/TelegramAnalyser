@@ -352,6 +352,18 @@ implementations are currently supposed to agree. The moment the Rust analyser
 computes something the Python one never did — which is the entire point of the
 rewrite — a difference stops meaning "Rust is wrong" and this stops being an
 oracle.
+
+**That moment arrived, and it cost a list rather than the harness.** The
+`dynamics` branch is the first thing here with no Python counterpart at all (see
+**Beyond the port**). `tga_metrics::ADDED` names it, `tools/diff_stats.py`
+carries the same list, and between them the rule is: a branch on that list may
+be Rust-only, must be present on the Rust side, and **must be absent from the
+Python dump** — if a name ever turns up on both, the two are supposed to agree
+again and the carve-out is hiding a real difference, so the suite fails. Every
+branch not on the list is still compared character for character. The same shape
+as `EXCLUDED`, one level up: the alternative to naming an addition is either
+deleting it or reporting it as a failure on every run, and the second teaches
+everyone to ignore the output.
 **It was going to expire at phase 5, and it did not have to.** One `bool` on
 `tga_report::Options` avoided it: `classic: true` renders the document
 `report.py` renders and the parity legs pass it, while `tga <folder>` renders
@@ -532,6 +544,41 @@ Four things worth keeping:
   normal-vision ΔE 19.3 against CVD ΔE 6.9.
 - **The oracle survived the phase that was supposed to end it.** See
   **Verification**; it cost one `bool` and a golden.
+
+## Beyond the port
+
+Everything above this line reproduces something `analyser/` already computed.
+`tga-metrics/src/dynamics.rs` is the first thing that does not, and it is one
+branch — `dynamics` — holding five figures the counting elsewhere leaves
+unanswerable:
+
+| | | on KRGM |
+|---|---|---|
+| `pairs` | reply edges collapsed onto unordered pairs, ranked on `min(there, back)` rather than the total | 4,007 mutual, 2,355 one-way |
+| `answer` | median reply latency by the hour the *parent* was posted | fastest 03:00 at 22 s, slowest 08:00 at 39 min |
+| `tenure` | first, last, active days, days dormant, and a status per person | 137 active, 32 fading, 81 long gone |
+| `retention` | active / new / returning / lost per month, silent months included | 10 months, 82.2% kept |
+| `depth` | reply-chain length, 2 up to 8+ | deepest 22, mean 2.5 |
+
+Four things worth keeping:
+
+- **`pairs` is the figure the graph section cannot give.** A directed edge
+  cannot tell a conversation from a broadcast: on UA KOLAB the heaviest pair
+  exchanges 249 replies at a balance of 0.08 — one person answering another who
+  almost never answers back — while a 9-and-9 pair at balance 1.00 is a genuine
+  correspondence. Ranked on the total the second is invisible; ranked on the
+  smaller direction it comes fourth.
+- **`tenure` is measured against the archive's last day, not today.** An export
+  is a fixed document, and reading the same file a year later must not silently
+  reclassify everyone in it as gone.
+- **The oracle survived again**, and the mechanism is the same one phase 5 used:
+  a declaration rather than a deletion. `ADDED` in **Verification** above; the
+  section renders behind `if !classic`, and `golden-classic.html` fails if it
+  leaks.
+- **It costs 0.16 s and 27 KB.** KRGM went 5.73 s to 5.89 s read-and-render, and
+  the report 842 KB to 869 KB — still inside the 1 MB target. Five figures over
+  333,582 messages is one extra pass over the replies; the read is still the
+  whole cost.
 
 ## Still open
 

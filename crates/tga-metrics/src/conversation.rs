@@ -36,7 +36,11 @@ pub const SESSION_GAP: i64 = 30 * 60;
 pub const LATENCY_CAP: i64 = 24 * 60 * 60;
 
 /// `statistics.median` — the mean of the two middle values on an even count.
-fn median(values: &[i64]) -> f64 {
+///
+/// Shared with [`crate::dynamics`] rather than copied there. It is one of the
+/// handful of functions that has to agree with Python exactly, and two
+/// definitions of it is two things to keep agreeing.
+pub(crate) fn median(values: &[i64]) -> f64 {
     if values.is_empty() {
         return 0.0;
     }

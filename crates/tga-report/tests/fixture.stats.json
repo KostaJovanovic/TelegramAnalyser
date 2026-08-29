@@ -236,6 +236,112 @@
    }
   ]
  },
+ "dynamics": {
+  "answer": {
+   "cap": 86400,
+   "counted": 11,
+   "counts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 4, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2],
+   "fastest_hour": {
+    "hour": 12,
+    "median": 90,
+    "replies": 4
+   },
+   "medians": [0, 0, 0, 0, 0, 0, 0, 0, 0, 240, 600, 0, 90, 0, 0, 0, 0, 0, 5400, 0, 0, 0, 0, 3000],
+   "minimum": 3,
+   "slowest_hour": {
+    "hour": 23,
+    "median": 3000,
+    "replies": 2
+   }
+  },
+  "depth": {
+   "buckets": [
+    ["2", 4],
+    ["3", 2],
+    ["4", 1],
+    ["5", 0],
+    ["6", 0],
+    ["7", 0],
+    ["8", 0],
+    ["8+", 0]
+   ],
+   "cap": 8,
+   "chained": 7,
+   "longest": {
+    "date": "2025-01-03 12:00",
+    "id": 17,
+    "messages": 4,
+    "topic": 0
+   },
+   "max": 4,
+   "mean": 2.6,
+   "median": 2
+  },
+  "empty": false,
+  "pairs": {
+   "directed": 2,
+   "mutual": 1,
+   "one_way": 0,
+   "rows": [
+    {
+     "a": "user1",
+     "a_name": "Ana",
+     "a_to_b": 5,
+     "b": "user2",
+     "b_name": "Bob & Co <the second>",
+     "b_to_a": 3,
+     "balance": 0.6,
+     "both": 3,
+     "replies": 8
+    }
+   ],
+   "shown": 1
+  },
+  "retention": {
+   "active": [2],
+   "kept_mean": 0.0,
+   "lost": [0],
+   "months": ["2025-01"],
+   "months_counted": 0,
+   "new": [2],
+   "people": 2,
+   "returning": [0]
+  },
+  "tenure": {
+   "active": 2,
+   "active_within": 30,
+   "as_of": "2025-01-07",
+   "fading": 0,
+   "fading_within": 90,
+   "gone": 0,
+   "rows": [
+    {
+     "active_days": 3,
+     "density": 0.5,
+     "dormant_days": 1,
+     "first": "2025-01-01",
+     "key": "user1",
+     "last": "2025-01-06",
+     "messages": 12,
+     "name": "Ana",
+     "span_days": 6,
+     "status": "active"
+    },
+    {
+     "active_days": 4,
+     "density": 0.5714285714285714,
+     "dormant_days": 0,
+     "first": "2025-01-01",
+     "key": "user2",
+     "last": "2025-01-07",
+     "messages": 10,
+     "name": "Bob & Co <the second>",
+     "span_days": 7,
+     "status": "active"
+    }
+   ]
+  }
+ },
  "export": {
   "members_count": null,
   "messages": 24,
