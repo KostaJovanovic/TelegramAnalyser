@@ -1,7 +1,5 @@
 //! What the messages were made of.
 //!
-//! Ported from `analyser/metrics/content.py`.
-//!
 //! Two figures about media are easy to conflate and are kept apart:
 //!
 //! * **sent** counts every message that carried an attachment. It is a fact
@@ -14,8 +12,8 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Map, Value};
 use tga_read::Export;
+use tga_stats::{Content, Count, MediaKind};
 
 use crate::identity::People;
 use crate::util::{round1, title_case, Counter};
@@ -66,7 +64,7 @@ fn is_peer_key(key: &str) -> bool {
     key.starts_with("user") || key.starts_with("chat") || key.starts_with("channel")
 }
 
-pub fn compute(export: &Export, people: &People) -> Value {
+pub fn compute(export: &Export, people: &People) -> Content {
     let msgs: Vec<_> = export.said().collect();
 
     let mut media: Counter<String> = Counter::new();
@@ -136,44 +134,44 @@ pub fn compute(export: &Export, people: &People) -> Value {
         }
     }
 
-    let kinds: Vec<Value> = media
+    let kinds: Vec<MediaKind> = media
         .most_common(None)
         .into_iter()
-        .map(|(kind, count)| {
-            json!({
-                "kind": kind,
-                "label": media_label(&kind),
-                "sent": count,
-                "saved": media_saved.get(&kind),
-                "bytes": media_bytes.get(&kind),
-            })
+        .map(|(kind, count)| MediaKind {
+            label: media_label(&kind),
+            sent: count,
+            saved: media_saved.get(&kind),
+            bytes: media_bytes.get(&kind),
+            kind,
         })
         .collect();
 
-    let ordered_lengths: Vec<Value> = bucket_names()
+    let ordered_lengths: Vec<Count> = bucket_names()
         .into_iter()
         .map(|name| {
             let n = lengths.get(&name);
-            json!([name, n])
+            Count::new(name, n)
         })
         .collect();
 
     let total_words: i64 = msgs.iter().map(|m| m.words as i64).sum();
     let total_chars: i64 = msgs.iter().map(|m| m.chars as i64).sum();
 
-    let mut emoji_person = Map::new();
-    for key in &emoji_by_person {
-        let pairs: Vec<Value> = emoji_person_counts[key]
-            .most_common(Some(3))
-            .into_iter()
-            .map(|(e, n)| json!([e, n]))
-            .collect();
-        emoji_person.insert(key.clone(), Value::Array(pairs));
-    }
+    let emoji_person: std::collections::BTreeMap<String, Vec<Count>> = emoji_by_person
+        .iter()
+        .map(|key| {
+            let top = emoji_person_counts[key]
+                .most_common(Some(3))
+                .into_iter()
+                .map(|(e, n)| Count::new(e, n))
+                .collect();
+            (key.clone(), top)
+        })
+        .collect();
 
     // A @mention of somebody with no public username arrives as a peer id,
     // which is unreadable. Resolve it to the name if we know them.
-    let mention_rows: Vec<Value> = mentions
+    let mention_rows: Vec<Count> = mentions
         .most_common(Some(20))
         .into_iter()
         .map(|(who, n)| {
@@ -183,11 +181,11 @@ pub fn compute(export: &Export, people: &People) -> Value {
             } else {
                 format!("@{who}")
             };
-            json!([shown, n])
+            Count::new(shown, n)
         })
         .collect();
 
-    let forward_rows: Vec<Value> = forward_sources
+    let forward_rows: Vec<Count> = forward_sources
         .most_common(Some(15))
         .into_iter()
         .map(|(src, n)| {
@@ -196,35 +194,39 @@ pub fn compute(export: &Export, people: &People) -> Value {
             } else {
                 src.clone()
             };
-            json!([shown, n])
+            Count::new(shown, n)
         })
         .collect();
 
-    let pairs = |items: Vec<(String, i64)>| -> Vec<Value> {
-        items.into_iter().map(|(k, n)| json!([k, n])).collect()
+    let pairs = |items: Vec<(String, i64)>| -> Vec<Count> {
+        items.into_iter().map(|(k, n)| Count::new(k, n)).collect()
     };
 
-    json!({
-        "messages": msgs.len(),
-        "with_text": with_text,
-        "edited": edited,
-        "total_words": total_words,
-        "total_chars": total_chars,
-        "mean_words": if with_text > 0 { round1(total_words as f64 / with_text as f64) } else { 0.0 },
-        "lengths": ordered_lengths,
-        "media_kinds": kinds,
-        "media_messages": media.total(),
-        "media_saved": media_saved.total(),
-        "media_bytes": media_bytes.total(),
-        "emoji": pairs(emoji.most_common(Some(40))),
-        "emoji_total": emoji.total(),
-        "emoji_by_person": emoji_person,
-        "stickers": pairs(stickers.most_common(Some(20))),
-        "domains": pairs(domains.most_common(Some(25))),
-        "links_total": domains.total(),
-        "hashtags": pairs(hashtags.most_common(Some(20))),
-        "mentions": mention_rows,
-        "forwards": forward_sources.total(),
-        "forward_sources": forward_rows,
-    })
+    Content {
+        messages: msgs.len(),
+        with_text,
+        edited,
+        total_words,
+        total_chars,
+        mean_words: if with_text > 0 {
+            round1(total_words as f64 / with_text as f64)
+        } else {
+            0.0
+        },
+        lengths: ordered_lengths,
+        media_kinds: kinds,
+        media_messages: media.total(),
+        media_saved: media_saved.total(),
+        media_bytes: media_bytes.total(),
+        emoji: pairs(emoji.most_common(Some(40))),
+        emoji_total: emoji.total(),
+        emoji_by_person: emoji_person,
+        stickers: pairs(stickers.most_common(Some(20))),
+        domains: pairs(domains.most_common(Some(25))),
+        links_total: domains.total(),
+        hashtags: pairs(hashtags.most_common(Some(20))),
+        mentions: mention_rows,
+        forwards: forward_sources.total(),
+        forward_sources: forward_rows,
+    }
 }

@@ -1,7 +1,5 @@
 //! The shape of the conversation: who answers whom, and how fast.
 //!
-//! Ported from `analyser/metrics/conversation.py`.
-//!
 //! Three things worth knowing before reading any number out of here.
 //!
 //! **Latency is measured on epoch seconds**, never on the wall clock. A reply
@@ -20,8 +18,8 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Value};
 use tga_read::{Export, Msg};
+use tga_stats::{Conversation, Edge, Latency, Session, Starter};
 
 use crate::identity::People;
 use crate::util::{round1, stamp_minutes, Counter};
@@ -35,11 +33,10 @@ pub const SESSION_GAP: i64 = 30 * 60;
 /// the latency figures, which the report says.
 pub const LATENCY_CAP: i64 = 24 * 60 * 60;
 
-/// `statistics.median` — the mean of the two middle values on an even count.
+/// The mean of the two middle values on an even count.
 ///
-/// Shared with [`crate::dynamics`] rather than copied there. It is one of the
-/// handful of functions that has to agree with Python exactly, and two
-/// definitions of it is two things to keep agreeing.
+/// Shared with [`crate::dynamics`] rather than copied there: two definitions of
+/// a median is two things to keep agreeing.
 pub(crate) fn median(values: &[i64]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -54,7 +51,11 @@ pub(crate) fn median(values: &[i64]) -> f64 {
     }
 }
 
-/// Python's `round()` — half to even, and it returns an integer.
+/// Half to even, returning an integer.
+///
+/// Not `f64::round`, which goes half away from zero. The difference lands in
+/// `percentile` below, where the index can fall on exactly .5, and it moves the
+/// p90 by one place in the sorted list.
 fn round_half_even(x: f64) -> i64 {
     let floor = x.floor();
     if (x - floor - 0.5).abs() < f64::EPSILON {
@@ -78,28 +79,6 @@ fn percentile(values: &[i64], fraction: f64) -> f64 {
     let last = ordered.len() - 1;
     let index = (round_half_even(fraction * last as f64).max(0) as usize).min(last);
     ordered[index] as f64
-}
-
-struct Session {
-    topic: usize,
-    start: String,
-    messages: usize,
-    voices: usize,
-    minutes: f64,
-    opened_by: String,
-}
-
-impl Session {
-    fn to_value(&self) -> Value {
-        json!({
-            "topic": self.topic,
-            "start": self.start,
-            "messages": self.messages,
-            "voices": self.voices,
-            "minutes": self.minutes,
-            "opened_by": self.opened_by,
-        })
-    }
 }
 
 fn session(
@@ -132,7 +111,7 @@ fn session(
     }
 }
 
-pub fn compute(export: &Export, people: &People) -> Value {
+pub fn compute(export: &Export, people: &People) -> Conversation {
     let msgs: Vec<&Msg> = export.said().collect();
     let index = export.by_id();
 
@@ -194,9 +173,8 @@ pub fn compute(export: &Export, people: &People) -> Value {
         }
     }
 
-    // Sessions, per topic. Topic order is first-appearance, which is what a
-    // Python defaultdict iterates in — and it decides `session_longest` on a
-    // tie, since `max` returns the first.
+    // Sessions, per topic. Topic order is first-appearance, and it decides
+    // `session_longest` on a tie: the first of equal maxima wins.
     let mut topic_order: Vec<usize> = Vec::new();
     let mut per_topic: HashMap<usize, Vec<&Msg>> = HashMap::new();
     for msg in &msgs {
@@ -229,40 +207,40 @@ pub fn compute(export: &Export, people: &People) -> Value {
     let lengths: Vec<i64> = sessions.iter().map(|s| s.messages as i64).collect();
     let voices: Vec<i64> = sessions.iter().map(|s| s.voices as i64).collect();
 
-    let mut slow: Vec<Value> = by_person_order
+    let mut slow: Vec<Latency> = by_person_order
         .iter()
         .filter(|key| by_person[*key].len() >= 5)
         .map(|key| {
             let values = &by_person[key];
-            json!({
-                "key": key,
-                "name": people.get(key).label(),
-                "replies": values.len(),
-                "median": median(values).trunc() as i64,
-            })
+            Latency {
+                key: key.clone(),
+                name: people.get(key).label().to_string(),
+                replies: values.len(),
+                median: median(values).trunc() as i64,
+            }
         })
         .collect();
     // Stable, so people with the same median stay in first-reply order.
-    slow.sort_by_key(|r| r["median"].as_i64().unwrap_or(0));
+    slow.sort_by_key(|r| r.median);
 
-    let fastest: Vec<Value> = slow.iter().take(12).cloned().collect();
-    let slowest: Vec<Value> = slow
+    let fastest: Vec<Latency> = slow.iter().take(12).cloned().collect();
+    let slowest: Vec<Latency> = slow
         .iter()
         .skip(slow.len().saturating_sub(12))
         .rev()
         .cloned()
         .collect();
 
-    let edge_rows = |counter: &Counter<(String, String)>| -> Vec<Value> {
+    let edge_rows = |counter: &Counter<(String, String)>| -> Vec<Edge> {
         counter
             .most_common(Some(400))
             .into_iter()
-            .map(|((a, b), n)| {
-                json!({
-                    "from": a, "to": b, "count": n,
-                    "from_name": people.get(&a).label(),
-                    "to_name": people.get(&b).label(),
-                })
+            .map(|((a, b), n)| Edge {
+                from_name: people.get(&a).label().to_string(),
+                to_name: people.get(&b).label().to_string(),
+                from: a,
+                to: b,
+                count: n,
             })
             .collect()
     };
@@ -270,34 +248,57 @@ pub fn compute(export: &Export, people: &People) -> Value {
     let longest = sessions
         .iter()
         .enumerate()
-        .max_by(|a, b| {
-            // `max` in Python keeps the first of equal maxima; `max_by` keeps
-            // the last, so the index breaks the tie the other way.
-            a.1.messages.cmp(&b.1.messages).then_with(|| b.0.cmp(&a.0))
-        })
-        .map(|(_, s)| s.to_value())
-        .unwrap_or(Value::Null);
+        // `max_by` keeps the last of equal maxima and the first is the one to
+        // name, so the index breaks the tie the other way.
+        .max_by(|a, b| a.1.messages.cmp(&b.1.messages).then_with(|| b.0.cmp(&a.0)))
+        .map(|(_, s)| s.clone());
 
-    json!({
-        "replies": replies,
-        "reply_share": if msgs.is_empty() { 0.0 } else { replies as f64 / msgs.len() as f64 },
-        "orphan_replies": orphans,
-        "self_replies": self_replies,
-        "latency_counted": latencies.len(),
-        "latency_median": if latencies.is_empty() { 0 } else { median(&latencies).trunc() as i64 },
-        "latency_p90": if latencies.is_empty() { 0 } else { percentile(&latencies, 0.9).trunc() as i64 },
-        "latency_cap": LATENCY_CAP,
-        "fastest": fastest,
-        "slowest": slowest,
-        "edges": edge_rows(&edges),
-        "reaction_edges": edge_rows(&reaction_edges),
-        "sessions": sessions.len(),
-        "session_gap": SESSION_GAP,
-        "session_median_messages": if lengths.is_empty() { 0 } else { median(&lengths).trunc() as i64 },
-        "session_median_voices": if voices.is_empty() { 0 } else { median(&voices).trunc() as i64 },
-        "session_longest": longest,
-        "starters": starters.most_common(Some(12)).into_iter().map(|(k, n)| {
-            json!({ "key": k, "name": people.get(&k).label(), "count": n })
-        }).collect::<Vec<_>>(),
-    })
+    Conversation {
+        replies,
+        reply_share: if msgs.is_empty() {
+            0.0
+        } else {
+            replies as f64 / msgs.len() as f64
+        },
+        orphan_replies: orphans,
+        self_replies,
+        latency_counted: latencies.len(),
+        latency_median: if latencies.is_empty() {
+            0
+        } else {
+            median(&latencies).trunc() as i64
+        },
+        latency_p90: if latencies.is_empty() {
+            0
+        } else {
+            percentile(&latencies, 0.9).trunc() as i64
+        },
+        latency_cap: LATENCY_CAP,
+        fastest,
+        slowest,
+        edges: edge_rows(&edges),
+        reaction_edges: edge_rows(&reaction_edges),
+        sessions: sessions.len(),
+        session_gap: SESSION_GAP,
+        session_median_messages: if lengths.is_empty() {
+            0
+        } else {
+            median(&lengths).trunc() as i64
+        },
+        session_median_voices: if voices.is_empty() {
+            0
+        } else {
+            median(&voices).trunc() as i64
+        },
+        session_longest: longest,
+        starters: starters
+            .most_common(Some(12))
+            .into_iter()
+            .map(|(k, n)| Starter {
+                name: people.get(&k).label().to_string(),
+                key: k,
+                count: n,
+            })
+            .collect(),
+    }
 }

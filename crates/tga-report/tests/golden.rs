@@ -40,8 +40,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
 use tga_notes::{Coverage, Event, Notes};
+use tga_stats::Stats;
 
 fn here() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests")
@@ -123,12 +123,12 @@ fn notes() -> Notes {
     }
 }
 
-fn stats() -> Value {
+fn stats() -> Stats {
     serde_json::from_str(
         &std::fs::read_to_string(here().join("fixture.stats.json"))
             .expect("the fixture is committed beside this test"),
     )
-    .expect("the fixture parses")
+    .expect("the fixture still matches the shape `analyse` returns")
 }
 
 fn rendered() -> String {

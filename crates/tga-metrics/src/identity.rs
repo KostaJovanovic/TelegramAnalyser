@@ -1,7 +1,5 @@
 //! Who is who, across a history in which people rename themselves.
 //!
-//! Ported from `analyser/identity.py`.
-//!
 //! One person is one **typed peer key** (`user123`), never a display name.
 //! Telegram lets anyone change their name at any moment and an export records
 //! whatever they were called when each message was sent, so grouping by the

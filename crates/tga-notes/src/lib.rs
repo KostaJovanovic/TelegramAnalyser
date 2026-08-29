@@ -1,8 +1,5 @@
 //! The layer a reader (or a model) adds on top of the numbers.
 //!
-//! Ported from `analyser/events.py`, and then widened to the layout PLAN.md
-//! actually calls for.
-//!
 //! Everything else in this workspace is derived: run it twice on the same
 //! export and you get the same report. An **event** is the opposite — a
 //! judgement about what a stretch of messages *meant*, which no amount of

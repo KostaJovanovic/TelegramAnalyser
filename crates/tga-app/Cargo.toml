@@ -14,6 +14,7 @@ path = "src/main.rs"
 tga-ui = { path = "../tga-ui" }
 tga-read = { path = "../tga-read" }
 tga-metrics = { path = "../tga-metrics" }
+tga-stats = { path = "../tga-stats" }
 tga-notes = { path = "../tga-notes" }
 tga-report = { path = "../tga-report" }
 

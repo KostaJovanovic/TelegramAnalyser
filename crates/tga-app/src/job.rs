@@ -1,7 +1,5 @@
 //! Read, analyse, render — off the main thread.
 //!
-//! Ported from `analyser/window.py`'s `Job`.
-//!
 //! **The thread is not precautionary.** Measured on the Python original: 6,643
 //! messages take 0.3 s and 333,582 take 24.8 s. This port does the large one in
 //! about 6 s, which is still six seconds in which a single-threaded window
@@ -135,7 +133,7 @@ fn run(request: Request, tx: UnboundedSender<Progress>) {
         path: request.out,
         messages: export.msgs.len(),
         topics: export.topics.len(),
-        people: stats["people"]["speakers"].as_i64().unwrap_or(0),
+        people: stats.people.speakers as i64,
         events: notes.events.len(),
     });
 }

@@ -1,7 +1,5 @@
 //! Who talked, how much, and where.
 //!
-//! Ported from `analyser/metrics/people.py`.
-//!
 //! One row per identity, never per name — see [`crate::identity`]. Two counts
 //! are kept apart on purpose and must not be added together:
 //!
@@ -12,11 +10,11 @@
 //!   anonymously. The report says so wherever this number appears; presenting
 //!   it as a total would be a wrong number that looks right.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::Timelike;
-use serde_json::{json, Map, Value};
 use tga_read::Export;
+use tga_stats::{People as PeopleStats, Person};
 
 use crate::identity::People;
 use crate::util::{round1, stamp_minutes};
@@ -46,60 +44,49 @@ struct Row {
 }
 
 impl Row {
-    fn into_value(self, total_msgs: usize) -> Value {
-        let mut out = Map::new();
-        out.insert("key".into(), json!(self.key));
-        out.insert("name".into(), json!(self.name));
-        out.insert("aliases".into(), json!(self.aliases));
-        out.insert("role".into(), json!(self.role));
-        out.insert("joined".into(), json!(self.joined));
-        out.insert("messages".into(), json!(self.messages));
-        out.insert("words".into(), json!(self.words));
-        out.insert("chars".into(), json!(self.chars));
-        out.insert("media".into(), json!(self.media));
-        out.insert("forwards".into(), json!(self.forwards));
-        out.insert("replies".into(), json!(self.replies));
-        out.insert("edited".into(), json!(self.edited));
-        out.insert("reactions_received".into(), json!(self.reactions_received));
-        out.insert("reacted_messages".into(), json!(self.reacted_messages));
-        out.insert("votes_given".into(), json!(self.votes_given));
-        out.insert("first".into(), json!(self.first));
-        out.insert("last".into(), json!(self.last));
-
-        let mut by_topic = Map::new();
-        for (index, n) in &self.by_topic {
-            by_topic.insert(index.to_string(), json!(n));
-        }
-        out.insert("by_topic".into(), Value::Object(by_topic));
-        out.insert("hours".into(), json!(self.hours));
-
-        out.insert(
-            "avg_words".into(),
-            json!(if self.messages > 0 {
+    fn into_person(self, total_msgs: usize) -> Person {
+        Person {
+            avg_words: if self.messages > 0 {
                 round1(self.words as f64 / self.messages as f64)
             } else {
                 0.0
-            }),
-        );
-        out.insert(
-            "share".into(),
-            json!(if total_msgs > 0 {
+            },
+            share: if total_msgs > 0 {
                 self.messages as f64 / total_msgs as f64
             } else {
                 0.0
-            }),
-        );
-        // Only ever set on a row that came from the roster, so it must stay
-        // absent rather than false everywhere else — the Python dict has no
-        // such key on a speaker and the diff would catch it.
-        if self.silent {
-            out.insert("silent".into(), json!(true));
+            },
+            by_topic: self
+                .by_topic
+                .iter()
+                .map(|(index, n)| (index.to_string(), *n))
+                .collect::<BTreeMap<_, _>>(),
+            key: self.key,
+            name: self.name,
+            aliases: self.aliases,
+            role: self.role,
+            joined: self.joined,
+            messages: self.messages,
+            words: self.words,
+            chars: self.chars,
+            media: self.media,
+            forwards: self.forwards,
+            replies: self.replies,
+            edited: self.edited,
+            reactions_received: self.reactions_received,
+            reacted_messages: self.reacted_messages,
+            votes_given: self.votes_given,
+            first: self.first,
+            last: self.last,
+            hours: self.hours,
+            // Only ever set on a row that came from the member list, and it is
+            // skipped when false rather than written -- see `Person`.
+            silent: self.silent,
         }
-        Value::Object(out)
     }
 }
 
-pub fn compute(export: &Export, people: &People) -> Value {
+pub fn compute(export: &Export, people: &People) -> PeopleStats {
     let msgs: Vec<_> = export.said().collect();
 
     // Insertion-ordered, because the final sort is stable and first-seen order
@@ -206,16 +193,19 @@ pub fn compute(export: &Export, people: &People) -> Value {
         0.0
     };
 
-    json!({
-        "rows": ranked.into_iter().map(|r| r.into_value(total)).collect::<Vec<_>>(),
-        "speakers": speaker_count,
-        "known_members": export.roster.len(),
-        "roster_complete": export.roster_complete,
-        "silent_members": silent_members,
-        "total_messages": total,
-        "top3_share": top3_share,
-        "votes_named": named_votes,
-        "votes_total": total_votes,
-        "votes_anonymous": (total_votes - named_votes).max(0),
-    })
+    PeopleStats {
+        rows: ranked
+            .into_iter()
+            .map(|r| r.into_person(total))
+            .collect::<Vec<_>>(),
+        speakers: speaker_count,
+        known_members: export.roster.len(),
+        roster_complete: export.roster_complete,
+        silent_members,
+        total_messages: total,
+        top3_share,
+        votes_named: named_votes,
+        votes_total: total_votes,
+        votes_anonymous: (total_votes - named_votes).max(0),
+    }
 }

@@ -1,7 +1,5 @@
 //! Who talks to whom, laid out as a diagram.
 //!
-//! Ported from `analyser/metrics/graph.py`.
-//!
 //! The layout is Fruchterman-Reingold, written out here rather than pulled in,
 //! because the algorithm is thirty lines.
 //!
@@ -15,13 +13,14 @@
 //! arcs says twice as much as the data supports. Direction is still in the
 //! matrix, which is the view that can carry it.
 //!
-//! *Deterministic per implementation* is not the same as *identical across
-//! two of them* — see `graph_layout_is_presentation` in `tests/oracle.rs` for
-//! what this port does and does not promise against the Python original.
+//! *Deterministic per implementation* is not the same as *stable under a
+//! rewrite*: 220 steps of a force layout amplify the last bit of `hypot`, so
+//! these coordinates are presentation and never a figure. Nothing in the report
+//! reads a number off them.
 
 use std::collections::HashMap;
 
-use serde_json::{json, Value};
+use tga_stats::{Edge, Graph, Link, Node};
 
 use crate::util::Counter;
 
@@ -30,26 +29,20 @@ pub const MAX_NODES: usize = 28;
 pub const ITERATIONS: usize = 220;
 
 pub fn build(
-    reply_edges: &[Value],
-    reaction_edges: &[Value],
+    reply_edges: &[Edge],
+    reaction_edges: &[Edge],
     weights: &HashMap<String, i64>,
-) -> Value {
+) -> Graph {
     let mut pooled: Counter<(String, String)> = Counter::new();
     for edge in reply_edges.iter().chain(reaction_edges.iter()) {
-        let a = edge["from"].as_str().unwrap_or("").to_string();
-        let b = edge["to"].as_str().unwrap_or("").to_string();
-        let count = edge["count"].as_i64().unwrap_or(0);
+        let (a, b) = (edge.from.clone(), edge.to.clone());
         if !a.is_empty() && !b.is_empty() && a != b {
-            let pair = if a <= b {
-                (a.clone(), b.clone())
-            } else {
-                (b.clone(), a.clone())
-            };
-            pooled.add(pair, count);
+            let pair = if a <= b { (a, b) } else { (b, a) };
+            pooled.add(pair, edge.count);
         }
     }
     if pooled.is_empty() {
-        return json!({ "nodes": [], "edges": [], "hidden": 0 });
+        return Graph::default();
     }
 
     let mut degree: Counter<String> = Counter::new();
@@ -89,27 +82,38 @@ pub fn build(
         .max()
         .unwrap_or(1);
 
-    let nodes: Vec<Value> = keep
+    let nodes: Vec<Node> = keep
         .iter()
         .map(|key| {
             let (x, y) = positions[key];
             let messages = weights.get(key).copied().unwrap_or(0);
-            json!({
-                "key": key,
-                "x": x,
-                "y": y,
-                "degree": degree.get(key),
-                "messages": messages,
-                "size": if top_weight != 0 { messages as f64 / top_weight as f64 } else { 0.0 },
-            })
+            Node {
+                key: key.clone(),
+                x,
+                y,
+                degree: degree.get(key),
+                messages,
+                size: if top_weight != 0 {
+                    messages as f64 / top_weight as f64
+                } else {
+                    0.0
+                },
+            }
         })
         .collect();
 
-    json!({
-        "nodes": nodes,
-        "edges": edges.iter().map(|(a, b, n)| json!({ "a": a, "b": b, "weight": n })).collect::<Vec<_>>(),
-        "hidden": ranked.len().saturating_sub(keep.len()),
-    })
+    Graph {
+        nodes,
+        edges: edges
+            .iter()
+            .map(|(a, b, n)| Link {
+                a: a.clone(),
+                b: b.clone(),
+                weight: *n,
+            })
+            .collect(),
+        hidden: ranked.len().saturating_sub(keep.len()),
+    }
 }
 
 /// Fruchterman-Reingold on the unit square, seeded on a circle.

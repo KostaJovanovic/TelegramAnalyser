@@ -11,12 +11,12 @@
 //! letterspaced uppercase micro-type. There are no cards.
 //!
 //! **This crate depends on neither `tga-read` nor `tga-metrics.`** It renders
-//! from a `serde_json::Value` of the shape `--stats` dumps, which is what lets
-//! `tests/golden.rs` replay a recorded fixture through the writer with no
-//! export on disk. See `Cargo.toml`.
+//! from a [`tga_stats::Stats`], which is exactly what `--stats` dumps, and that
+//! is what lets `tests/golden.rs` replay a recorded fixture through the writer
+//! with no export on disk. See `Cargo.toml`.
 
-use serde_json::Value;
 use tga_notes::Notes;
+use tga_stats::Stats;
 
 pub mod assets;
 pub mod charts;
@@ -576,29 +576,18 @@ impl Default for Options {
 /// who never posted gets one as `silent`. Building the lookup from the stats
 /// rather than taking `tga_metrics::People` is what keeps this crate off
 /// `tga-metrics` and lets a recorded `stats.json` render on its own.
-pub fn names_from_stats(stats: &Value) -> Names {
+pub fn names_from_stats(stats: &Stats) -> Names {
     stats
-        .get("people")
-        .and_then(|folk| folk.get("rows"))
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let key = row.get("key")?.as_str()?;
-                    let name = row.get("name")?.as_str()?;
-                    Some((key.to_string(), name.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+        .people
+        .rows
+        .iter()
+        .map(|row| (row.key.clone(), row.name.clone()))
+        .collect()
 }
 
 /// The whole report, as one string.
-pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) -> String {
-    let title = format!(
-        "{} — archive report",
-        stats["export"]["name"].as_str().unwrap_or_default()
-    );
+pub fn render(stats: &Stats, names: &Names, notes: &Notes, options: &Options) -> String {
+    let title = format!("{} — archive report", stats.export.name);
 
     let body = format!(
         "{}{}{}{}{}{}{}{}{}</section>{}{}{}",
@@ -645,12 +634,12 @@ pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) ->
 /// Every row is bucketed identically — same date range, same width, same
 /// `bucket_days` — so one list serves all 260 of them. Emitting it per cell is
 /// what made the presence rows 64% of a large report.
-fn shared_axis(stats: &Value) -> String {
-    let series = stats::pairs(&stats["activity"], "per_day");
+fn shared_axis(stats: &Stats) -> String {
+    let series = &stats.activity.per_day;
     if series.is_empty() {
         return String::new();
     }
-    let labels = charts::bucket_labels(&series, sections::PRESENCE_WIDTH);
+    let labels = charts::bucket_labels(series, sections::PRESENCE_WIDTH);
     format!(
         "<div id=\"axis\" hidden data-days=\"{}\"></div>",
         esc(&labels.join("|"))
@@ -683,38 +672,50 @@ fn section_head(title: &str, anchor: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use tga_stats::{Activity, Count, Dynamics, Tenure, TenureRow};
 
     /// The smallest stats value that exercises every branch's absence.
-    fn bare() -> Value {
-        json!({
-            "export": { "name": "Nothing", "root": "C:\\x", "topics": 0, "messages": 0 },
-            "activity": { "empty": true },
-            "people": { "rows": [], "speakers": 0, "known_members": 0,
-                        "roster_complete": null, "silent_members": 0,
-                        "top3_share": 0.0, "votes_named": 0, "votes_total": 0 },
-            "content": { "messages": 0, "lengths": [], "media_kinds": [] },
-            "conversation": { "replies": 0, "sessions": 0, "session_gap": 1800,
-                              "self_replies": 0, "fastest": [], "edges": [],
-                              "starters": [], "orphan_replies": 0 },
-            "graph": { "nodes": [], "edges": [], "hidden": 0 },
-            "topics": [], "superlatives": [], "awards": [],
-            "streak": {}, "churn": { "months": [] }, "renamed": []
-        })
+    ///
+    /// Almost all of it is `Default`, which is the point: the writer has to
+    /// produce a whole document from a run that found nothing, and every
+    /// section has to decide for itself what to say about having no data.
+    fn bare() -> Stats {
+        Stats {
+            export: tga_stats::ExportInfo {
+                name: "Nothing".into(),
+                root: "C:\\x".into(),
+                ..Default::default()
+            },
+            activity: Activity {
+                empty: true,
+                ..Default::default()
+            },
+            conversation: tga_stats::Conversation {
+                session_gap: 1800,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 
     /// Five days of activity, so the timeline has an axis to draw on.
-    fn dated() -> Value {
-        json!({
-            "empty": false, "first": "2025-01-01", "last": "2025-01-05",
-            "span_days": 5, "active_days": 2,
-            "per_day": [["2025-01-01", 3], ["2025-01-02", 0], ["2025-01-03", 1],
-                        ["2025-01-04", 0], ["2025-01-05", 2]],
-            "per_month": [["2025-01", 6]],
-            "per_hour": vec![0; 24], "per_weekday": vec![0; 7],
-            "hour_weekday": vec![vec![0; 24]; 7],
-            "per_day_by_topic": {}, "per_day_by_person": {}
-        })
+    fn dated() -> Activity {
+        Activity {
+            empty: false,
+            first: "2025-01-01".into(),
+            last: "2025-01-05".into(),
+            span_days: 5,
+            active_days: 2,
+            per_day: vec![
+                Count::new("2025-01-01", 3),
+                Count::new("2025-01-02", 0),
+                Count::new("2025-01-03", 1),
+                Count::new("2025-01-04", 0),
+                Count::new("2025-01-05", 2),
+            ],
+            per_month: vec![Count::new("2025-01", 6)],
+            ..Default::default()
+        }
     }
 
     fn options() -> Options {
@@ -770,40 +771,63 @@ mod tests {
     /// nobody in it can be thirty days dormant and the section correctly renders
     /// the "everybody posted in the last month" line instead. The populated
     /// table is real markup and needs a case of its own.
-    fn drifted() -> Value {
-        let mut stats = bare();
-        stats["dynamics"] = json!({
-            "empty": false,
-            "pairs": { "rows": [], "shown": 0, "mutual": 0, "one_way": 0, "directed": 0 },
-            "answer": {
-                "counts": vec![0; 24], "medians": vec![0; 24],
-                "counted": 0, "minimum": 20, "cap": 86400,
-                "fastest_hour": Value::Null, "slowest_hour": Value::Null,
-            },
-            "tenure": {
-                "as_of": "2025-06-30", "active": 0, "fading": 1, "gone": 1,
-                "active_within": 30, "fading_within": 90,
-                "rows": [
-                    { "key": "user1", "name": "Ana", "messages": 400,
-                      "first": "2025-01-01", "last": "2025-05-20", "span_days": 140,
-                      "active_days": 40, "density": 0.2857142857142857,
-                      "dormant_days": 41, "status": "fading" },
-                    { "key": "user2", "name": "Bob & Co <the second>", "messages": 12,
-                      "first": "2025-01-01", "last": "2025-01-04", "span_days": 4,
-                      "active_days": 2, "density": 0.5,
-                      "dormant_days": 177, "status": "gone" },
-                ],
-            },
-            "retention": {
-                "months": [], "active": [], "new": [], "returning": [], "lost": [],
-                "people": 2, "kept_mean": 0.0, "months_counted": 0,
-            },
-            "depth": {
-                "buckets": [], "cap": 8, "chained": 0, "max": 0,
-                "median": 0, "mean": 0.0, "longest": Value::Null,
-            },
-        });
-        stats
+    fn drifted() -> Stats {
+        Stats {
+            dynamics: Some(Dynamics {
+                empty: false,
+                answer: tga_stats::Answer {
+                    minimum: 20,
+                    cap: 86400,
+                    ..Default::default()
+                },
+                tenure: Tenure {
+                    as_of: "2025-06-30".into(),
+                    active: 0,
+                    fading: 1,
+                    gone: 1,
+                    active_within: 30,
+                    fading_within: 90,
+                    rows: vec![
+                        TenureRow {
+                            key: "user1".into(),
+                            name: "Ana".into(),
+                            messages: 400,
+                            first: "2025-01-01".into(),
+                            last: "2025-05-20".into(),
+                            span_days: 140,
+                            active_days: 40,
+                            density: 0.2857142857142857,
+                            dormant_days: 41,
+                            status: "fading".into(),
+                        },
+                        TenureRow {
+                            key: "user2".into(),
+                            // `&` and `<` on purpose: this row is also what
+                            // pins the escaping on the way into the table.
+                            name: "Bob & Co <the second>".into(),
+                            messages: 12,
+                            first: "2025-01-01".into(),
+                            last: "2025-01-04".into(),
+                            span_days: 4,
+                            active_days: 2,
+                            density: 0.5,
+                            dormant_days: 177,
+                            status: "gone".into(),
+                        },
+                    ],
+                },
+                retention: tga_stats::Retention {
+                    people: 2,
+                    ..Default::default()
+                },
+                depth: tga_stats::Depth {
+                    cap: 8,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..bare()
+        }
     }
 
     #[test]
@@ -850,7 +874,7 @@ mod tests {
         // A report opens as a local file, so anything that survives as markup
         // runs with that origin. The name came from a group title.
         let mut stats = bare();
-        stats["export"]["name"] = json!("<script>alert(1)</script>");
+        stats.export.name = "<script>alert(1)</script>".into();
         let html = render(&stats, &Names::new(), &Notes::default(), &options());
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
@@ -876,7 +900,7 @@ mod tests {
             tags: vec![],
         };
         let mut stats = bare();
-        stats["activity"] = dated();
+        stats.activity = dated();
         let notes = Notes {
             events: vec![event],
             source: "events.json".into(),
@@ -892,7 +916,7 @@ mod tests {
     #[test]
     fn no_events_file_says_how_to_add_one_rather_than_saying_nothing() {
         let mut stats = bare();
-        stats["activity"] = dated();
+        stats.activity = dated();
         let html = render(&stats, &Names::new(), &Notes::default(), &options());
         assert!(html.contains("No events file yet."));
         assert!(html.contains("analysis/digest.jsonl"));
@@ -901,7 +925,7 @@ mod tests {
     #[test]
     fn an_export_with_dates_draws_the_hero_ribbon_and_its_axis() {
         let mut stats = bare();
-        stats["activity"] = dated();
+        stats.activity = dated();
         let html = render(&stats, &Names::new(), &Notes::default(), &options());
         assert!(html.contains("class=\"chart ribbon hero\""));
         assert!(html.contains("class=\"chart axis-strip\""));
@@ -912,12 +936,19 @@ mod tests {
 
     #[test]
     fn names_are_taken_from_the_people_rows() {
-        let stats = json!({
-            "people": { "rows": [
-                { "key": "user1", "name": "Ana" },
-                { "key": "user2", "name": "Bob" },
-            ]}
-        });
+        let mut stats = bare();
+        stats.people.rows = vec![
+            tga_stats::Person {
+                key: "user1".into(),
+                name: "Ana".into(),
+                ..Default::default()
+            },
+            tga_stats::Person {
+                key: "user2".into(),
+                name: "Bob".into(),
+                ..Default::default()
+            },
+        ];
         let names = names_from_stats(&stats);
         assert_eq!(names.get("user1").map(String::as_str), Some("Ana"));
         assert_eq!(names.len(), 2);

@@ -57,27 +57,29 @@ tga-read      export folder -> model. Both layouts (ours: result.json per topic
               at the root; Desktop: chats/chat_<id>/result.json). No UI, no network.
 tga-notes     the hand-written annotation layer + the model-facing digest.
               MUST NOT depend on tga-read.
-tga-metrics   every figure, one pass. No I/O.
-tga-report    the ramp, the SVG marks, the one HTML file.
+tga-stats     the shape of every figure, and the dump's format. Data only.
+tga-metrics   every figure, one pass. No I/O. Fills in a tga_stats::Stats.
+tga-report    the ramp, the SVG marks, the one HTML file. Reads a Stats.
               MUST NOT depend on tga-read or tga-metrics.
 tga-cli       the `tga` binary.
 tga-ui        tokens, fonts, components in GPUI.
 tga-app       the window, TelegramAnalyser.exe.
 ```
 
-`tga-report` renders from a `serde_json::Value` of exactly the shape
-`tga_metrics::analyse` returns and `--stats` dumps. That is what lets a recorded
-fixture replay through the writer with no export on disk — the golden test and
-`--from-stats` both rest on it. `tga-notes` inherits the rule at one remove
-because it carries the `Event` type `tga-report` renders; the
-`Export -> digest::Row` mapping therefore lives in the *callers*
-(`tga-cli/src/main.rs`, `tga-app`).
+`tga-report` renders from a `tga_stats::Stats`, which is exactly what `--stats`
+dumps. That is what lets a recorded dump replay through the writer with no
+export on disk — the golden test and `--from-stats` both rest on it. **The
+shape lives in `tga-stats` rather than in either side**, so the writer can read
+it without depending on the reader or the metrics, and the compiler checks every
+field name. `tga-notes` inherits the rule at one remove because it carries the
+`Event` type `tga-report` renders; the `Export -> digest::Row` mapping therefore
+lives in the *callers* (`tga-cli/src/main.rs`, `tga-app`).
 
-**That `Value` is on its way out.** Step 3 of `REFACTOR.md` moves the shape into
-named types in a new `tga-stats` crate that both sides depend on, which keeps
-the layering rule and gets the compiler to check the field names. Until then,
-every read of the stats goes through `tga-report/src/stats.rs`, whose accessors
-all answer a missing branch with a zero rather than a panic.
+Every field of `Stats` has a `Default` and the struct is `#[serde(default)]`, so
+a dump with a branch missing renders an empty section rather than failing to
+load. `dynamics` is an `Option` on purpose: absent is "recorded before this
+existed, draw no section", which is a different fact from an archive with
+nothing in it.
 
 ## Invariants that change numbers or break the harness
 
@@ -89,13 +91,20 @@ all answer a missing branch with a zero rather than a panic.
 - **A forum topic is a thread**, so every top-level message in one is marked as
   a reply to the message that opened it. Read literally, response-time medians
   stretch to days.
-- **`serde_json` without `preserve_order`.** Its default BTreeMap serialises
-  sorted, which is what makes the stats dump comparable against an earlier copy
-  of itself; turning it on fills that diff with reordering noise.
+- **The stats dump is sorted by `tga_stats::write`, not by the map type.**
+  `serde_json`'s object is a `BTreeMap` and sorts itself — until something turns
+  on its `preserve_order` feature, and cargo unifies features across everything
+  built in one invocation. `gpui` turns it on, so `cargo build -p tga-cli` and
+  `cargo build` produced differently ordered dumps from the same numbers. The
+  sort is explicit now; do not remove it on the grounds that BTreeMap already
+  does it.
 - **The stylesheet and the script are inside Rust string literals, and their
   `/* */` comments are emitted into the report.** Editing one changes the file's
   bytes and fails `save.bat baseline`. They move out into real `.css` and `.js`
   files in step 4.
+- **`Count` serialises as `["label", 41]`, not as an object.** Nine branches use
+  it. The `from`/`into` pair on the struct is what keeps the file's shape while
+  the code reads `.label` and `.n`; changing it invalidates every recorded dump.
 - **The `\u{91}2` in the `details[open]` marker is an inherited defect**, still
   present in `CSS` and overridden by a real minus in `CSS_SURFACE`. There is a
   test pinning the order. The two stylesheets merge and the literal goes when the

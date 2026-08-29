@@ -1,7 +1,5 @@
 //! The input side: what you hand a model.
 //!
-//! Ported from `analyser/events.py`'s `write_digest` / `write_brief`.
-//!
 //! A [`Row`] is a message trimmed to what a reader needs in order to judge
 //! *what happened*: who, when, in which topic, what they said, what it
 //! answered, and how much the room reacted. Media becomes a marker rather than

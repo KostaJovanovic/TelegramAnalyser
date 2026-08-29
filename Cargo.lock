@@ -5787,6 +5787,7 @@ dependencies = [
  "tga-notes",
  "tga-read",
  "tga-report",
+ "tga-stats",
  "tga-ui",
 ]
 
@@ -5801,6 +5802,7 @@ dependencies = [
  "tga-notes",
  "tga-read",
  "tga-report",
+ "tga-stats",
 ]
 
 [[package]]
@@ -5810,6 +5812,7 @@ dependencies = [
  "chrono",
  "serde_json",
  "tga-read",
+ "tga-stats",
 ]
 
 [[package]]
@@ -5837,6 +5840,15 @@ dependencies = [
  "chrono",
  "serde_json",
  "tga-notes",
+ "tga-stats",
+]
+
+[[package]]
+name = "tga-stats"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

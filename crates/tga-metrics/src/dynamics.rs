@@ -1,13 +1,5 @@
 //! How the group behaves *towards each other*, and how that changes over time.
 //!
-//! **Nothing in this module is a port**, and that is the one fact to hold on to
-//! while reading it. Every other branch of [`crate::analyse`] reproduces a
-//! figure `analyser/metrics/` already computes, which is what lets
-//! `tests/oracle.rs` diff the whole dump against a working implementation. This
-//! branch has no counterpart on the Python side, so nothing checks it but its
-//! own tests — see [`crate::ADDED`], which declares that and is what stops the
-//! oracle reading a rust-only branch as a failure.
-//!
 //! Five figures, all of which the counting elsewhere leaves unanswerable:
 //!
 //! * **`pairs`** — the graph section already says who talks *at* whom. A
@@ -43,8 +35,10 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{Datelike, NaiveDate, Timelike};
-use serde_json::{json, Value};
 use tga_read::{Export, Msg};
+use tga_stats::{
+    Answer, Count, Deepest, Depth, Dynamics, HourPick, Pair, Pairs, Retention, Tenure, TenureRow,
+};
 
 use crate::conversation::{median, LATENCY_CAP};
 use crate::identity::People;
@@ -75,21 +69,24 @@ const DEPTH_CAP: i64 = 8;
 /// cycle guard below catches the common shape; this catches the rest.
 const MAX_CHAIN: usize = 10_000;
 
-pub fn compute(export: &Export, people: &People) -> Value {
+pub fn compute(export: &Export, people: &People) -> Dynamics {
     let msgs: Vec<&Msg> = export.said().collect();
     if msgs.is_empty() {
-        return json!({ "empty": true });
+        return Dynamics {
+            empty: true,
+            ..Default::default()
+        };
     }
     let index = export.by_id();
 
-    json!({
-        "empty": false,
-        "pairs": pairs(&msgs, export, &index, people),
-        "answer": answer(&msgs, export, &index),
-        "tenure": tenure(&msgs, people),
-        "retention": retention(&msgs, people),
-        "depth": depth(&msgs, export, &index),
-    })
+    Dynamics {
+        empty: false,
+        pairs: pairs(&msgs, export, &index, people),
+        answer: answer(&msgs, export, &index),
+        tenure: tenure(&msgs, people),
+        retention: retention(&msgs, people),
+        depth: depth(&msgs, export, &index),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +99,7 @@ pub fn compute(export: &Export, people: &People) -> Value {
 /// is the whole figure. A pair where one person sent 300 replies and got 2 back
 /// has a large total and is not a correspondence; ranked on the smaller
 /// direction it falls where it belongs, and `balance` says how lopsided it was.
-fn pairs(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>, people: &People) -> Value {
+fn pairs(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>, people: &People) -> Pairs {
     // Insertion-ordered, so the pair set below is built in a deterministic
     // order however the hashes fall. Same reasoning as `util::Counter`'s.
     let mut directed: Counter<(String, String)> = Counter::new();
@@ -152,36 +149,40 @@ fn pairs(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>, people: &P
             .then_with(|| a.3.cmp(&b.3))
     });
 
-    let rows: Vec<Value> = ranked
+    let rows: Vec<Pair> = ranked
         .iter()
         .take(PAIRS_SHOWN)
         .map(|(both, total, a, b)| {
             let a_to_b = directed.get(&(a.clone(), b.clone()));
             let b_to_a = directed.get(&(b.clone(), a.clone()));
             let most = a_to_b.max(b_to_a);
-            json!({
-                "a": a,
-                "b": b,
-                "a_name": people.name_of(a),
-                "b_name": people.name_of(b),
-                "a_to_b": a_to_b,
-                "b_to_a": b_to_a,
-                "both": both,
-                "replies": total,
+            Pair {
+                a_name: people.name_of(a),
+                b_name: people.name_of(b),
+                a: a.clone(),
+                b: b.clone(),
+                a_to_b,
+                b_to_a,
+                both: *both,
+                replies: *total,
                 // 1.0 is an even exchange, 0.0 is one person talking. Emitted
                 // raw rather than rounded, like every other share in the dump.
-                "balance": if most > 0 { *both as f64 / most as f64 } else { 0.0 },
-            })
+                balance: if most > 0 {
+                    *both as f64 / most as f64
+                } else {
+                    0.0
+                },
+            }
         })
         .collect();
 
-    json!({
-        "rows": rows,
-        "shown": rows.len(),
-        "mutual": mutual,
-        "one_way": one_way,
-        "directed": directed.len(),
-    })
+    Pairs {
+        shown: rows.len(),
+        rows,
+        mutual,
+        one_way,
+        directed: directed.len(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +195,7 @@ fn pairs(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>, people: &P
 /// answers me" is a question about when you posted; keying it on when the
 /// answer arrived measures the answerer's habits instead, which is a different
 /// question and the one `conversation::fastest` already covers.
-fn answer(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>) -> Value {
+fn answer(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>) -> Answer {
     let mut buckets: Vec<Vec<i64>> = vec![Vec::new(); 24];
     for msg in msgs {
         let Some(parent) = parent_of(msg, export, index) else {
@@ -206,23 +207,22 @@ fn answer(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>) -> Value 
         }
     }
 
-    let counts: Vec<i64> = buckets.iter().map(|v| v.len() as i64).collect();
-    let medians: Vec<i64> = buckets
-        .iter()
-        .map(|v| {
-            if v.is_empty() {
-                0
-            } else {
-                median(v).trunc() as i64
-            }
-        })
-        .collect();
+    let mut counts = [0i64; 24];
+    let mut medians = [0i64; 24];
+    for (hour, values) in buckets.iter().enumerate() {
+        counts[hour] = values.len() as i64;
+        medians[hour] = if values.is_empty() {
+            0
+        } else {
+            median(values).trunc() as i64
+        };
+    }
 
     // Only hours with enough replies to mean something get to be the best or
     // the worst. Without the floor both are won by 04:00, where three replies
     // landed and one of them was instant.
     let solid: Vec<usize> = (0..24).filter(|h| counts[*h] >= ANSWER_MIN).collect();
-    let pick = |wanted: &dyn Fn(i64, i64) -> bool| -> Value {
+    let pick = |wanted: &dyn Fn(i64, i64) -> bool| -> Option<HourPick> {
         let mut best: Option<usize> = None;
         for hour in &solid {
             match best {
@@ -230,25 +230,22 @@ fn answer(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>) -> Value 
                 _ => best = Some(*hour),
             }
         }
-        match best {
-            Some(hour) => json!({
-                "hour": hour,
-                "median": medians[hour],
-                "replies": counts[hour],
-            }),
-            None => Value::Null,
-        }
+        best.map(|hour| HourPick {
+            hour,
+            median: medians[hour],
+            replies: counts[hour],
+        })
     };
 
-    json!({
-        "counts": counts,
-        "medians": medians,
-        "counted": counts.iter().sum::<i64>(),
-        "minimum": ANSWER_MIN,
-        "cap": LATENCY_CAP,
-        "fastest_hour": pick(&|candidate, current| candidate < current),
-        "slowest_hour": pick(&|candidate, current| candidate > current),
-    })
+    Answer {
+        counted: counts.iter().sum::<i64>(),
+        counts,
+        medians,
+        minimum: ANSWER_MIN,
+        cap: LATENCY_CAP,
+        fastest_hour: pick(&|candidate, current| candidate < current),
+        slowest_hour: pick(&|candidate, current| candidate > current),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +266,7 @@ struct Span {
 /// `dormant` is measured against the **archive's** last day rather than today,
 /// because an export is a fixed document: reading the same file a year later
 /// must not silently reclassify everyone in it as gone.
-fn tenure(msgs: &[&Msg], people: &People) -> Value {
+fn tenure(msgs: &[&Msg], people: &People) -> Tenure {
     let archive_last = msgs[msgs.len() - 1].when.date();
 
     let mut order: Vec<String> = Vec::new();
@@ -296,7 +293,7 @@ fn tenure(msgs: &[&Msg], people: &People) -> Value {
         span.messages += 1;
     }
 
-    let mut rows: Vec<Value> = Vec::new();
+    let mut rows: Vec<TenureRow> = Vec::new();
     let (mut active, mut fading, mut gone) = (0i64, 0i64, 0i64);
     let mut ranked: Vec<&String> = order.iter().collect();
     // Same order as `people.rows`, so the two tables can be read side by side.
@@ -322,32 +319,36 @@ fn tenure(msgs: &[&Msg], people: &People) -> Value {
             "gone"
         };
         let width = (span.last - span.first).num_days() + 1;
-        rows.push(json!({
-            "key": key,
-            "name": span.name,
-            "messages": span.messages,
-            "first": span.first.to_string(),
-            "last": span.last.to_string(),
-            "span_days": width,
-            "active_days": span.days.len(),
+        rows.push(TenureRow {
+            key: key.clone(),
+            name: span.name.clone(),
+            messages: span.messages,
+            first: span.first.to_string(),
+            last: span.last.to_string(),
+            span_days: width,
+            active_days: span.days.len(),
             // What share of the days they were around on did they actually
             // speak. A regular with a short tenure scores above somebody who
             // has been here for years and posts twice a season.
-            "density": if width > 0 { span.days.len() as f64 / width as f64 } else { 0.0 },
-            "dormant_days": dormant,
-            "status": status,
-        }));
+            density: if width > 0 {
+                span.days.len() as f64 / width as f64
+            } else {
+                0.0
+            },
+            dormant_days: dormant,
+            status: status.to_string(),
+        });
     }
 
-    json!({
-        "rows": rows,
-        "as_of": archive_last.to_string(),
-        "active": active,
-        "fading": fading,
-        "gone": gone,
-        "active_within": DORMANT_ACTIVE,
-        "fading_within": DORMANT_FADING,
-    })
+    Tenure {
+        rows,
+        as_of: archive_last.to_string(),
+        active,
+        fading,
+        gone,
+        active_within: DORMANT_ACTIVE,
+        fading_within: DORMANT_FADING,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -360,7 +361,7 @@ fn tenure(msgs: &[&Msg], people: &People) -> Value {
 /// the only kind it can see. Nobody is announced for going quiet, and going
 /// quiet is how a group actually ends — so this counts the four states that
 /// membership list cannot: still here, back after a gap, new, and lost.
-fn retention(msgs: &[&Msg], people: &People) -> Value {
+fn retention(msgs: &[&Msg], people: &People) -> Retention {
     let month_of = |day: NaiveDate| format!("{:04}-{:02}", day.year(), day.month());
 
     let mut spoke: HashMap<String, HashSet<String>> = HashMap::new();
@@ -410,21 +411,25 @@ fn retention(msgs: &[&Msg], people: &People) -> Value {
         previous = now;
     }
 
-    json!({
-        "months": months,
-        "active": act,
-        "new": fresh,
-        "returning": back,
-        "lost": lost,
-        "people": before.len(),
+    Retention {
+        months,
+        active: act,
+        new: fresh,
+        returning: back,
+        lost,
+        people: before.len(),
         // The mean of the monthly rates, not the ratio of the totals: every
         // month gets one vote, so a single enormous month cannot speak for the
-        // years around it. Emitted unrounded, like `share` and `reply_share`
-        // — rounding to a percent here and dividing back by 100 puts float
-        // noise in the dump and still hands the report the same figure.
-        "kept_mean": if kept.is_empty() { 0.0 } else { kept.iter().sum::<f64>() / kept.len() as f64 },
-        "months_counted": kept.len(),
-    })
+        // years around it. Emitted unrounded, like `share` and `reply_share` —
+        // rounding to a percent here and dividing back by 100 puts float noise
+        // in the dump and still hands the report the same figure.
+        kept_mean: if kept.is_empty() {
+            0.0
+        } else {
+            kept.iter().sum::<f64>() / kept.len() as f64
+        },
+        months_counted: kept.len(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +444,7 @@ fn retention(msgs: &[&Msg], people: &People) -> Value {
 /// The walk is iterative rather than recursive on purpose. A chain is bounded
 /// by nothing but the file, and 300,000 stack frames is a crash rather than a
 /// wrong number — which is the worse failure of the two.
-fn depth(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>) -> Value {
+fn depth(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>) -> Depth {
     let mut known: HashMap<i64, i64> = HashMap::new();
     for msg in &export.msgs {
         if known.contains_key(&msg.id) {
@@ -487,39 +492,40 @@ fn depth(msgs: &[&Msg], export: &Export, index: &HashMap<i64, usize>) -> Value {
         };
     }
 
-    let mut buckets: Vec<Value> = Vec::new();
+    let mut buckets: Vec<Count> = Vec::new();
     for at in 2..=DEPTH_CAP + 1 {
         let label = if at > DEPTH_CAP {
             format!("{DEPTH_CAP}+")
         } else {
             at.to_string()
         };
-        buckets.push(json!([label, counts.get(&at)]));
+        buckets.push(Count::new(label, counts.get(&at)));
     }
 
-    let longest = match deepest {
-        Some(msg) => json!({
-            "id": msg.id,
-            "topic": msg.topic,
-            "date": crate::util::stamp_minutes(&msg.when),
-            "messages": known.get(&msg.id).copied().unwrap_or(1),
-        }),
-        None => Value::Null,
-    };
+    let longest = deepest.map(|msg| Deepest {
+        id: msg.id,
+        topic: msg.topic,
+        date: crate::util::stamp_minutes(&msg.when),
+        messages: known.get(&msg.id).copied().unwrap_or(1),
+    });
 
-    json!({
-        "buckets": buckets,
-        "cap": DEPTH_CAP,
-        "chained": lengths.len(),
-        "max": lengths.iter().copied().max().unwrap_or(0),
-        "median": if lengths.is_empty() { 0 } else { median(&lengths).trunc() as i64 },
-        "mean": if lengths.is_empty() {
+    Depth {
+        buckets,
+        cap: DEPTH_CAP,
+        chained: lengths.len(),
+        max: lengths.iter().copied().max().unwrap_or(0),
+        median: if lengths.is_empty() {
+            0
+        } else {
+            median(&lengths).trunc() as i64
+        },
+        mean: if lengths.is_empty() {
             0.0
         } else {
             round1(lengths.iter().sum::<i64>() as f64 / lengths.len() as f64)
         },
-        "longest": longest,
-    })
+        longest,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -614,16 +620,16 @@ mod tests {
         let export = conversation();
         let people = People::new(&export);
         let out = compute(&export, &people);
-        let rows = out["pairs"]["rows"].as_array().unwrap();
+        let rows = &out.pairs.rows;
 
         // user1<->user2 exchanged three replies, two one way and one the
         // other; user3 sent two and received none. The lopsided pair must not
         // outrank the correspondence just for having a similar total.
-        assert_eq!(rows[0]["both"], 1);
-        assert_eq!(rows[0]["replies"], 3);
-        assert_eq!(rows[1]["both"], 0);
-        assert_eq!(out["pairs"]["mutual"], 1);
-        assert_eq!(out["pairs"]["one_way"], 1);
+        assert_eq!(rows[0].both, 1);
+        assert_eq!(rows[0].replies, 3);
+        assert_eq!(rows[1].both, 0);
+        assert_eq!(out.pairs.mutual, 1);
+        assert_eq!(out.pairs.one_way, 1);
     }
 
     #[test]
@@ -634,8 +640,8 @@ mod tests {
         ]);
         let people = People::new(&export);
         let out = compute(&export, &people);
-        assert!(out["pairs"]["rows"].as_array().unwrap().is_empty());
-        assert_eq!(out["pairs"]["directed"], 0);
+        assert!(out.pairs.rows.is_empty());
+        assert_eq!(out.pairs.directed, 0);
     }
 
     #[test]
@@ -643,14 +649,14 @@ mod tests {
         let export = conversation();
         let people = People::new(&export);
         let out = compute(&export, &people);
-        let counts = out["answer"]["counts"].as_array().unwrap();
+        let counts = out.answer.counts;
         // Four replies answer messages posted at 10:00, one answers 10:09, and
         // none answers anything posted at 11:00 — the two 11:00 messages are
         // replies themselves, and a reply's own hour is not what this counts.
         assert_eq!(counts[10], 5);
         assert_eq!(counts[11], 0);
         // Well under ANSWER_MIN, so neither superlative is claimed.
-        assert!(out["answer"]["fastest_hour"].is_null());
+        assert!(out.answer.fastest_hour.is_none());
     }
 
     #[test]
@@ -662,17 +668,17 @@ mod tests {
         ]);
         let people = People::new(&export);
         let out = compute(&export, &people);
-        let rows = out["tenure"]["rows"].as_array().unwrap();
-        assert_eq!(out["tenure"]["as_of"], "2025-01-31");
-        assert_eq!(rows[0]["dormant_days"], 0);
-        assert_eq!(rows[0]["span_days"], 31);
-        assert_eq!(rows[0]["active_days"], 2);
-        assert_eq!(rows[1]["dormant_days"], 30);
+        let rows = &out.tenure.rows;
+        assert_eq!(out.tenure.as_of, "2025-01-31");
+        assert_eq!(rows[0].dormant_days, 0);
+        assert_eq!(rows[0].span_days, 31);
+        assert_eq!(rows[0].active_days, 2);
+        assert_eq!(rows[1].dormant_days, 30);
         // 30 days is still inside DORMANT_ACTIVE, and the boundary is the
         // thing worth pinning: an off-by-one here silently reclassifies
         // everyone who posts monthly.
-        assert_eq!(rows[1]["status"], "active");
-        assert_eq!(out["tenure"]["active"], 2);
+        assert_eq!(rows[1].status, "active");
+        assert_eq!(out.tenure.active, 2);
     }
 
     #[test]
@@ -693,18 +699,15 @@ mod tests {
         ]);
         let people = People::new(&export);
         let out = compute(&export, &people);
-        let ret = &out["retention"];
-        assert_eq!(
-            ret["months"].as_array().unwrap(),
-            &vec![json!("2025-01"), json!("2025-02"), json!("2025-03")]
-        );
-        assert_eq!(ret["active"], json!([2, 0, 1]));
-        assert_eq!(ret["new"], json!([2, 0, 0]));
+        let ret = &out.retention;
+        assert_eq!(ret.months, ["2025-01", "2025-02", "2025-03"]);
+        assert_eq!(ret.active, [2, 0, 1]);
+        assert_eq!(ret.new, [2, 0, 0]);
         // Nobody returned in March, because February is what March is measured
         // against and February was empty. Collapsing the gap would have called
         // this a return.
-        assert_eq!(ret["returning"], json!([0, 0, 0]));
-        assert_eq!(ret["lost"], json!([0, 2, 0]));
+        assert_eq!(ret.returning, [0, 0, 0]);
+        assert_eq!(ret.lost, [0, 2, 0]);
     }
 
     #[test]
@@ -712,14 +715,14 @@ mod tests {
         let export = conversation();
         let people = People::new(&export);
         let out = compute(&export, &people);
-        let depth = &out["depth"];
+        let depth = &out.depth;
         // 1 <- 2 <- 3 <- 4 is a chain of four; 5 and 6 both sit at two.
-        assert_eq!(depth["max"], 4);
-        assert_eq!(depth["chained"], 5);
-        assert_eq!(depth["longest"]["id"], 4);
-        assert_eq!(depth["buckets"][0], json!(["2", 3]));
-        assert_eq!(depth["buckets"][1], json!(["3", 1]));
-        assert_eq!(depth["buckets"][2], json!(["4", 1]));
+        assert_eq!(depth.max, 4);
+        assert_eq!(depth.chained, 5);
+        assert_eq!(depth.longest.as_ref().expect("a deepest chain").id, 4);
+        assert_eq!(depth.buckets[0], Count::new("2", 3));
+        assert_eq!(depth.buckets[1], Count::new("3", 1));
+        assert_eq!(depth.buckets[2], Count::new("4", 1));
     }
 
     #[test]
@@ -733,13 +736,16 @@ mod tests {
         ]);
         let people = People::new(&export);
         let out = compute(&export, &people);
-        assert!(out["depth"]["max"].as_i64().unwrap() >= 1);
+        assert!(out.depth.max >= 1);
     }
 
     #[test]
     fn an_export_with_nothing_said_says_so() {
         let export = export(vec![]);
         let people = People::new(&export);
-        assert_eq!(compute(&export, &people), json!({ "empty": true }));
+        let out = compute(&export, &people);
+        assert!(out.empty);
+        assert!(out.pairs.rows.is_empty());
+        assert!(out.tenure.rows.is_empty());
     }
 }

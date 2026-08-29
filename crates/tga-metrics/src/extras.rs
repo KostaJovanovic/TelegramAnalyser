@@ -1,7 +1,5 @@
 //! The bits that do not fit a chart: records, arrivals and departures, topics.
 //!
-//! Ported from `analyser/metrics/extras.py`.
-//!
 //! A superlative is a claim about one message, so each one carries the id and
 //! date that back it. Nothing here reports a record without saying which
 //! message it was — an unsourced "busiest day" is a number the reader cannot
@@ -10,8 +8,8 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{Datelike, NaiveDate};
-use serde_json::{json, Value};
 use tga_read::{Export, Msg};
+use tga_stats::{Activity, Award, Churn, ChurnEvent, Figure, Person, Streak, Superlative, Topic};
 
 use crate::identity::People;
 use crate::util::{round1, stamp_minutes, Counter};
@@ -63,31 +61,26 @@ fn snippet(msg: &Msg) -> String {
     }
 }
 
-fn record(msg: &Msg, people: &People, value: Value, unit: &str) -> serde_json::Map<String, Value> {
-    let mut out = serde_json::Map::new();
-    out.insert("id".into(), json!(msg.id));
-    out.insert("topic".into(), json!(msg.topic));
-    out.insert("date".into(), json!(stamp_minutes(&msg.when)));
-    out.insert("who".into(), json!(people.name_of(&people.key_of(msg))));
-    out.insert("text".into(), json!(snippet(msg)));
-    out.insert("value".into(), value);
-    out.insert("unit".into(), json!(unit));
-    out
+/// A record about one message, with the message named.
+fn record(title: &str, msg: &Msg, people: &People, value: Figure, unit: &str) -> Superlative {
+    Superlative {
+        title: title.to_string(),
+        id: Some(msg.id),
+        topic: Some(msg.topic),
+        date: stamp_minutes(&msg.when),
+        who: people.name_of(&people.key_of(msg)),
+        text: snippet(msg),
+        value,
+        unit: unit.to_string(),
+    }
 }
 
-fn titled(title: &str, mut body: serde_json::Map<String, Value>) -> Value {
-    let mut out = serde_json::Map::new();
-    out.insert("title".into(), json!(title));
-    out.append(&mut body);
-    Value::Object(out)
-}
-
-pub fn superlatives(export: &Export, people: &People, activity: &Value) -> Value {
+pub fn superlatives(export: &Export, people: &People, activity: &Activity) -> Vec<Superlative> {
     let msgs: Vec<&Msg> = export.said().collect();
     if msgs.is_empty() {
-        return json!([]);
+        return Vec::new();
     }
-    let mut out: Vec<Value> = Vec::new();
+    let mut out: Vec<Superlative> = Vec::new();
 
     // `max` on `(value, -id)`: the biggest, and on a tie the *lower* id.
     let best_by = |score: &dyn Fn(&Msg) -> i64| -> &Msg {
@@ -99,30 +92,34 @@ pub fn superlatives(export: &Export, people: &People, activity: &Value) -> Value
 
     let reacted = best_by(&|m: &Msg| m.reaction_total());
     if reacted.reaction_total() > 0 {
-        out.push(titled(
+        out.push(record(
             "Most reacted to",
-            record(
-                reacted,
-                people,
-                json!(reacted.reaction_total()),
-                "reactions",
-            ),
+            reacted,
+            people,
+            Figure::Count(reacted.reaction_total()),
+            "reactions",
         ));
     }
 
     let longest = best_by(&|m: &Msg| m.words as i64);
     if longest.words > 0 {
-        out.push(titled(
+        out.push(record(
             "Longest message",
-            record(longest, people, json!(longest.words), "words"),
+            longest,
+            people,
+            Figure::Count(longest.words as i64),
+            "words",
         ));
     }
 
     let biggest = best_by(&|m: &Msg| m.file_size);
     if biggest.file_size > 0 {
-        out.push(titled(
+        out.push(record(
             "Largest file",
-            record(biggest, people, json!(human_bytes(biggest.file_size)), ""),
+            biggest,
+            people,
+            Figure::Text(human_bytes(biggest.file_size)),
+            "",
         ));
     }
 
@@ -137,36 +134,38 @@ pub fn superlatives(export: &Export, people: &People, activity: &Value) -> Value
         // Spans every message, service entries included — a reply can point at
         // one.
         if let Some(&at) = export.by_id().get(&target_id) {
-            out.push(titled(
+            out.push(record(
                 "Most replied to",
-                record(&export.msgs[at], people, json!(count), "replies"),
+                &export.msgs[at],
+                people,
+                Figure::Count(count),
+                "replies",
             ));
         }
     }
 
-    if activity.get("empty") != Some(&json!(true)) {
-        out.push(json!({
-            "title": "Busiest day",
-            "id": Value::Null, "topic": Value::Null,
-            "date": activity["busiest_day"]["date"],
-            "who": "", "text": "",
-            "value": activity["busiest_day"]["messages"], "unit": "messages",
-        }));
-        let quiet = &activity["quietest"];
-        if !quiet.is_null() {
-            out.push(json!({
-                "title": "Longest silence",
-                "id": Value::Null, "topic": Value::Null,
-                "date": format!("{} to {}",
-                    quiet["from"].as_str().unwrap_or_default(),
-                    quiet["to"].as_str().unwrap_or_default()),
-                "who": "", "text": "",
-                "value": quiet["days"], "unit": "days",
-            }));
+    // The two that are about the calendar rather than about one message, and
+    // so the only two with no id to cite.
+    if !activity.empty {
+        out.push(Superlative {
+            title: "Busiest day".into(),
+            date: activity.busiest_day.date.clone(),
+            value: Figure::Count(activity.busiest_day.messages),
+            unit: "messages".into(),
+            ..Default::default()
+        });
+        if let Some(quiet) = &activity.quietest {
+            out.push(Superlative {
+                title: "Longest silence".into(),
+                date: format!("{} to {}", quiet.from, quiet.to),
+                value: Figure::Count(quiet.days as i64),
+                unit: "days".into(),
+                ..Default::default()
+            });
         }
     }
 
-    Value::Array(out)
+    out
 }
 
 /// Per-person records, restricted to people with enough messages to mean it.
@@ -174,28 +173,20 @@ pub fn superlatives(export: &Export, people: &People, activity: &Value) -> Value
 /// Without the floor every one of these is won by somebody who sent four
 /// messages, all of them at 4am, and the report says something true about
 /// nobody.
-fn messages(row: &Value) -> i64 {
-    row["messages"].as_i64().unwrap_or(0)
+fn hour_share(row: &Person, hours: std::ops::Range<usize>) -> f64 {
+    let sum: i64 = hours.map(|h| row.hours[h]).sum();
+    sum as f64 / row.messages as f64
 }
 
-fn hour_share(row: &Value, hours: std::ops::Range<usize>) -> f64 {
-    let counts = row["hours"].as_array().expect("hours");
-    let sum: i64 = hours.map(|h| counts[h].as_i64().unwrap_or(0)).sum();
-    sum as f64 / messages(row) as f64
-}
-
-pub fn awards(rows: &[Value], minimum: i64) -> Value {
-    let eligible: Vec<&Value> = rows
-        .iter()
-        .filter(|r| r["messages"].as_i64().unwrap_or(0) >= minimum)
-        .collect();
+pub fn awards(rows: &[Person], minimum: i64) -> Vec<Award> {
+    let eligible: Vec<&Person> = rows.iter().filter(|r| r.messages >= minimum).collect();
     if eligible.is_empty() {
-        return json!([]);
+        return Vec::new();
     }
 
     // Plain functions rather than closures: a `Box<dyn Fn>` is `'static` by
     // default, and a closure over two locals cannot be.
-    type Score = fn(&Value) -> f64;
+    type Score = fn(&Person) -> f64;
     let picks: [(&str, &str, Score); 4] = [
         (
             "Night owl",
@@ -206,10 +197,10 @@ pub fn awards(rows: &[Value], minimum: i64) -> Value {
             hour_share(r, MORNING)
         }),
         ("Most reacted to", "reactions per message they sent", |r| {
-            r["reactions_received"].as_i64().unwrap_or(0) as f64 / messages(r) as f64
+            r.reactions_received as f64 / r.messages as f64
         }),
         ("Writes longest", "words per message on average", |r| {
-            r["avg_words"].as_f64().unwrap_or(0.0)
+            r.avg_words
         }),
     ];
 
@@ -222,31 +213,31 @@ pub fn awards(rows: &[Value], minimum: i64) -> Value {
                 score(a)
                     .partial_cmp(&score(b))
                     .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| messages(b).cmp(&messages(a)))
+                    .then_with(|| b.messages.cmp(&a.messages))
             })
             .expect("non-empty");
         let value = score(best);
         if value <= 0.0 {
             continue;
         }
-        out.push(json!({
-            "title": title,
-            "name": best["name"],
-            "key": best["key"],
-            "value": if note.starts_with("of their") {
+        out.push(Award {
+            title: title.to_string(),
+            name: best.name.clone(),
+            key: best.key.clone(),
+            value: if note.starts_with("of their") {
                 format!("{:.0}%", value * 100.0)
             } else {
                 format!("{value:.1}")
             },
-            "note": note,
-            "messages": messages(best),
-        }));
+            note: note.to_string(),
+            messages: best.messages,
+        });
     }
-    Value::Array(out)
+    out
 }
 
 /// The longest run of consecutive days somebody posted on.
-pub fn streaks(export: &Export, people: &People) -> Value {
+pub fn streaks(export: &Export, people: &People) -> Option<Streak> {
     let mut order: Vec<String> = Vec::new();
     let mut per_person: HashMap<String, HashSet<NaiveDate>> = HashMap::new();
     for msg in export.said() {
@@ -271,7 +262,7 @@ pub fn streaks(export: &Export, people: &People) -> Value {
         days.sort_unstable();
         // Note the shape: `run` is only ever *compared* inside the pairwise
         // walk, so somebody who posted on exactly one day never registers at
-        // all. That is the Python behaviour and it is preserved.
+        // all. A one-day streak is not a streak.
         let mut run = 1usize;
         for pair in days.windows(2) {
             run = if (pair[1] - pair[0]).num_days() == 1 {
@@ -288,12 +279,12 @@ pub fn streaks(export: &Export, people: &People) -> Value {
     }
 
     if best_key.is_empty() {
-        return json!({});
+        return None;
     }
-    json!({
-        "name": people.name_of(&best_key),
-        "days": best_run,
-        "ended": best_end.map(|d| d.to_string()).unwrap_or_default(),
+    Some(Streak {
+        name: people.name_of(&best_key),
+        days: best_run,
+        ended: best_end.map(|d| d.to_string()).unwrap_or_default(),
     })
 }
 
@@ -304,7 +295,7 @@ pub fn streaks(export: &Export, people: &People) -> Value {
 /// better source but says nothing about anyone who has since left. The service
 /// messages in the history record joins and removals as they happened, but
 /// only the ones Telegram announced.
-pub fn churn(export: &Export, people: &People, activity: &Value) -> Value {
+pub fn churn(export: &Export, people: &People, activity: &Activity) -> Churn {
     let month_of = |year: i32, month: u32| format!("{year:04}-{month:02}");
 
     let mut joined: Counter<String> = Counter::new();
@@ -316,7 +307,7 @@ pub fn churn(export: &Export, people: &People, activity: &Value) -> Value {
 
     let mut announced_join: Counter<String> = Counter::new();
     let mut announced_leave: Counter<String> = Counter::new();
-    let mut events: Vec<Value> = Vec::new();
+    let mut events: Vec<ChurnEvent> = Vec::new();
     for msg in &export.msgs {
         if !msg.service {
             continue;
@@ -337,13 +328,17 @@ pub fn churn(export: &Export, people: &People, activity: &Value) -> Value {
         } else {
             announced_leave.add(month.clone(), count as i64);
         }
-        events.push(json!({
-            "date": stamp_minutes(&msg.when),
-            "kind": if is_join { "join" } else { "leave" },
-            "count": count,
-            "who": if msg.name.is_empty() { people.name_of(&msg.sender) } else { msg.name.clone() },
-            "names": msg.members,
-        }));
+        events.push(ChurnEvent {
+            date: stamp_minutes(&msg.when),
+            kind: if is_join { "join" } else { "leave" }.to_string(),
+            count,
+            who: if msg.name.is_empty() {
+                people.name_of(&msg.sender)
+            } else {
+                msg.name.clone()
+            },
+            names: msg.members.clone(),
+        });
     }
 
     let mut speaking: HashMap<String, HashSet<String>> = HashMap::new();
@@ -358,43 +353,45 @@ pub fn churn(export: &Export, people: &People, activity: &Value) -> Value {
             .insert(key);
     }
 
-    let mut months: Vec<String> = activity["per_month"]
-        .as_array()
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|r| r[0].as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut months: Vec<String> = activity
+        .per_month
+        .iter()
+        .map(|row| row.label.clone())
+        .collect();
     months.extend(joined.keys().cloned());
     months.extend(announced_join.keys().cloned());
     months.extend(speaking.keys().cloned());
     months.sort();
     months.dedup();
 
-    json!({
-        "months": months,
-        "roster_joins": months.iter().map(|m| joined.get(m)).collect::<Vec<_>>(),
-        "announced_joins": months.iter().map(|m| announced_join.get(m)).collect::<Vec<_>>(),
-        "announced_leaves": months.iter().map(|m| announced_leave.get(m)).collect::<Vec<_>>(),
-        "active": months.iter().map(|m| speaking.get(m).map_or(0, HashSet::len)).collect::<Vec<_>>(),
-        "events": events,
-        "roster_dated": joined.total(),
-        "roster_size": export.roster.len(),
-    })
+    Churn {
+        roster_joins: months.iter().map(|m| joined.get(m)).collect(),
+        announced_joins: months.iter().map(|m| announced_join.get(m)).collect(),
+        announced_leaves: months.iter().map(|m| announced_leave.get(m)).collect(),
+        active: months
+            .iter()
+            .map(|m| speaking.get(m).map_or(0, HashSet::len))
+            .collect(),
+        months,
+        events,
+        roster_dated: joined.total(),
+        roster_size: export.roster.len(),
+    }
 }
 
 /// Every metric that fits in a row, cut per topic.
-pub fn topics(export: &Export, people: &People) -> Value {
+pub fn topics(export: &Export, people: &People) -> Vec<Topic> {
     let mut out = Vec::new();
     for topic in &export.topics {
         let stream: Vec<&Msg> = export.said().filter(|m| m.topic == topic.index).collect();
         if stream.is_empty() {
-            out.push(json!({
-                "index": topic.index, "name": topic.name, "messages": 0,
-                "voices": 0, "words": 0, "media": 0, "replies": 0,
-                "reactions": 0, "first": "", "last": "", "top": "",
-            }));
+            // No `avg_words` at all rather than a zero: there is no average of
+            // nothing, and 0.0 would read as "they wrote empty messages".
+            out.push(Topic {
+                index: topic.index,
+                name: topic.name.clone(),
+                ..Default::default()
+            });
             continue;
         }
         let mut voices: Counter<String> = Counter::new();
@@ -405,24 +402,24 @@ pub fn topics(export: &Export, people: &People) -> Value {
             }
         }
         let words: i64 = stream.iter().map(|m| m.words as i64).sum();
-        out.push(json!({
-            "index": topic.index,
-            "name": topic.name,
-            "messages": stream.len(),
-            "voices": voices.len(),
-            "words": words,
-            "avg_words": round1(words as f64 / stream.len() as f64),
-            "media": stream.iter().filter(|m| !m.media.is_empty()).count(),
-            "replies": stream.iter().filter(|m| m.reply_to.is_some()).count(),
-            "reactions": stream.iter().map(|m| m.reaction_total()).sum::<i64>(),
-            "first": stream[0].when.date().to_string(),
-            "last": stream[stream.len() - 1].when.date().to_string(),
-            "top": if voices.is_empty() {
+        out.push(Topic {
+            index: topic.index,
+            name: topic.name.clone(),
+            messages: stream.len(),
+            voices: voices.len(),
+            words,
+            avg_words: Some(round1(words as f64 / stream.len() as f64)),
+            media: stream.iter().filter(|m| !m.media.is_empty()).count(),
+            replies: stream.iter().filter(|m| m.reply_to.is_some()).count(),
+            reactions: stream.iter().map(|m| m.reaction_total()).sum::<i64>(),
+            first: stream[0].when.date().to_string(),
+            last: stream[stream.len() - 1].when.date().to_string(),
+            top: if voices.is_empty() {
                 String::new()
             } else {
                 people.name_of(&voices.most_common(Some(1))[0].0)
             },
-        }));
+        });
     }
-    Value::Array(out)
+    out
 }

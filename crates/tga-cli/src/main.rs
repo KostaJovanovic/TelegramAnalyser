@@ -126,7 +126,9 @@ fn main() -> Result<()> {
         };
         let text = std::fs::read_to_string(dump)
             .map_err(|e| anyhow::anyhow!("{}: {e}", dump.display()))?;
-        let stats: serde_json::Value =
+        // A dump that no longer matches the shape now fails here, by name,
+        // instead of rendering a report full of zeroes.
+        let stats: tga_stats::Stats =
             serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", dump.display()))?;
         let html = tga_report::render(
             &stats,
@@ -137,8 +139,8 @@ fn main() -> Result<()> {
         write_utf8(&out, &html)?;
         println!(
             "{} people, {} topics{} (from {})",
-            stats["people"]["speakers"],
-            stats["export"]["topics"],
+            stats.people.speakers,
+            stats.export.topics,
             if notes.events.is_empty() {
                 String::new()
             } else {
@@ -178,7 +180,7 @@ fn main() -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, to_sorted_json(&stats))?;
+        std::fs::write(path, tga_stats::write(&stats)?)?;
         println!("  {}", path.display());
     }
 
@@ -205,7 +207,7 @@ fn main() -> Result<()> {
     println!(
         "{} messages, {} people, {} topics{}",
         thousands(export.msgs.len()),
-        stats["people"]["speakers"],
+        stats.people.speakers,
         export.topics.len(),
         if notes.events.is_empty() {
             String::new()
@@ -260,22 +262,6 @@ fn digest_rows(export: &tga_read::Export, people: &tga_metrics::People) -> Vec<t
 /// will look for the equivalent.
 fn write_utf8(path: &Path, text: &str) -> std::io::Result<()> {
     std::fs::write(path, text)
-}
-
-/// The stats dump: sorted keys, one-space indent, non-ASCII left alone.
-///
-/// The key order comes free — serde_json's default map is a BTreeMap, so it
-/// serialises sorted. Sorted rather than declaration order because this file is
-/// compared against an earlier copy of itself byte for byte, and a diff that
-/// reorders is a diff nobody reads. The indent is one space rather than
-/// `to_string_pretty`'s two only because a 777 KB dump is 777 KB either way and
-/// the narrower one wraps less.
-fn to_sorted_json(value: &serde_json::Value) -> String {
-    let mut buf = Vec::new();
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
-    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
-    serde::Serialize::serialize(value, &mut ser).expect("serialising to a Vec cannot fail");
-    String::from_utf8(buf).expect("serde_json emits UTF-8")
 }
 
 fn thousands(n: usize) -> String {

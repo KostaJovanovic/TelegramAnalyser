@@ -1,8 +1,5 @@
 //! Hand a finished report to whatever opens HTML.
 //!
-//! Ported from `analyser/window.py`'s `_open`, which is `os.startfile` on
-//! Windows and `xdg-open` elsewhere.
-//!
 //! **The Windows path is absolute, and that is a security decision rather than
 //! a tidiness one.** `CreateProcess` searches the calling process's own
 //! directory before `PATH`, and this binary is built to be copied into

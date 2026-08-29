@@ -1,7 +1,5 @@
 //! SVG marks, drawn from Rust, themed from CSS.
 //!
-//! Ported from `analyser/charts.py`.
-//!
 //! Two rules run through all of it.
 //!
 //! **Colour is a variable, never a hex.** Every fill is `var(--accent)` or a
@@ -32,7 +30,11 @@ pub const BAR_GAP: f64 = 2.0;
 pub const MAX_BAR: f64 = 24.0;
 
 /// One day of the shared time axis.
-pub type Day = (String, i64);
+///
+/// The same [`tga_stats::Count`] the metrics emit, so a series arrives here
+/// without being reshaped on the way. `.label` is the ISO date and `.n` is how
+/// many messages landed on it.
+pub type Day = tga_stats::Count;
 
 // ---------------------------------------------------------------------------
 // text
@@ -293,7 +295,7 @@ pub fn bucket_days(series: &[Day], width: f64) -> (Vec<Bucket>, usize) {
         return (
             series
                 .iter()
-                .map(|(day, count)| (day.clone(), day.clone(), *count))
+                .map(|day| (day.label.clone(), day.label.clone(), day.n))
                 .collect(),
             1,
         );
@@ -301,9 +303,9 @@ pub fn bucket_days(series: &[Day], width: f64) -> (Vec<Bucket>, usize) {
     let mut out = Vec::with_capacity(series.len() / per + 1);
     for chunk in series.chunks(per) {
         out.push((
-            chunk[0].0.clone(),
-            chunk[chunk.len() - 1].0.clone(),
-            chunk.iter().map(|(_, c)| c).sum(),
+            chunk[0].label.clone(),
+            chunk[chunk.len() - 1].label.clone(),
+            chunk.iter().map(|day| day.n).sum(),
         ));
     }
     (out, per)
@@ -517,8 +519,8 @@ pub fn time_axis(series: &[Day], width: f64, height: f64) -> String {
     if series.is_empty() {
         return frame(width, height, "", "", "");
     }
-    let first = iso(&series[0].0);
-    let last = iso(&series[series.len() - 1].0);
+    let first = iso(&series[0].label);
+    let last = iso(&series[series.len() - 1].label);
     let span = ((last - first).num_days()).max(1);
 
     let mut marks: Vec<(NaiveDate, String)> = Vec::new();
@@ -653,8 +655,8 @@ pub fn rail(events: &[Event], series: &[Day], width: f64, height: f64, kinds: &[
     if series.is_empty() || events.is_empty() {
         return String::new();
     }
-    let first = iso(&series[0].0);
-    let last = iso(&series[series.len() - 1].0);
+    let first = iso(&series[0].label);
+    let last = iso(&series[series.len() - 1].label);
     let span = ((last - first).num_days()).max(1) as f64;
 
     // Inset, so a marker on the first or last day keeps its whole dot and its
@@ -766,8 +768,8 @@ pub fn coverage_band(
     if series.is_empty() || (from.is_none() && to.is_none()) {
         return String::new();
     }
-    let first = iso(&series[0].0);
-    let last = iso(&series[series.len() - 1].0);
+    let first = iso(&series[0].label);
+    let last = iso(&series[series.len() - 1].label);
     let span = ((last - first).num_days()).max(1) as f64;
     let at = |day: NaiveDate| -> f64 {
         ((day - first).num_days() as f64 / span).clamp(0.0, 1.0) * width
@@ -1054,17 +1056,20 @@ pub fn calendar(
     if series.is_empty() {
         return frame(width, cell.unwrap_or(12.0), "", "", "");
     }
-    let counts: HashMap<&str, i64> = series.iter().map(|(d, n)| (d.as_str(), *n)).collect();
+    let counts: HashMap<&str, i64> = series
+        .iter()
+        .map(|day| (day.label.as_str(), day.n))
+        .collect();
     let owned;
     let scale = match scale {
         Some(scale) => scale,
         None => {
-            owned = Quantiles::new(series.iter().map(|(_, n)| *n));
+            owned = Quantiles::new(series.iter().map(|day| day.n));
             &owned
         }
     };
-    let first = iso(&series[0].0);
-    let last = iso(&series[series.len() - 1].0);
+    let first = iso(&series[0].label);
+    let last = iso(&series[series.len() - 1].label);
     let origin = first - Days::new(first.weekday().num_days_from_monday() as u64);
     let weeks = ((last - origin).num_days() / 7 + 1).max(1) as f64;
 
@@ -1326,7 +1331,7 @@ mod tests {
         counts
             .iter()
             .enumerate()
-            .map(|(i, n)| ((start + Days::new(i as u64)).to_string(), *n))
+            .map(|(i, n)| Day::new((start + Days::new(i as u64)).to_string(), *n))
             .collect()
     }
 

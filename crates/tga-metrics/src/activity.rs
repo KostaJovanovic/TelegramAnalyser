@@ -1,7 +1,5 @@
 //! When the group talked.
 //!
-//! Ported from `analyser/metrics/activity.py`.
-//!
 //! Every clock-face and calendar figure here reads `Msg::when`, the export's
 //! local wall clock — see the note at the top of `tga-read`. "Who posts at
 //! 3am" is a question about the clock in the room, not about UTC.
@@ -11,19 +9,22 @@
 //! as a line silently closes a two-month gap into a straight segment and
 //! invents activity that never happened.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{Datelike, Days, NaiveDate, Timelike};
-use serde_json::{json, Map, Value};
 use tga_read::Export;
+use tga_stats::{Activity, Busiest, Count, Gap, Sparse};
 
 use crate::identity::People;
 use crate::util::round1;
 
-pub fn compute(export: &Export, people: &People) -> Value {
+pub fn compute(export: &Export, people: &People) -> Activity {
     let msgs: Vec<_> = export.said().collect();
     if msgs.is_empty() {
-        return json!({ "empty": true });
+        return Activity {
+            empty: true,
+            ..Default::default()
+        };
     }
 
     let mut per_day: HashMap<NaiveDate, i64> = HashMap::new();
@@ -85,15 +86,15 @@ pub fn compute(export: &Export, people: &People) -> Value {
         }
     }
     let quietest = match (gap_len, gap_end) {
-        (0, _) | (_, None) => Value::Null,
+        (0, _) | (_, None) => None,
         (len, Some(end)) => {
             let from = end
                 .checked_sub_days(Days::new(len as u64 - 1))
                 .expect("date underflow");
-            json!({
-                "days": len,
-                "from": from.to_string(),
-                "to": end.to_string(),
+            Some(Gap {
+                days: len,
+                from: from.to_string(),
+                to: end.to_string(),
             })
         }
     };
@@ -114,43 +115,52 @@ pub fn compute(export: &Export, people: &People) -> Value {
     let mut per_month: Vec<(String, i64)> = per_month.into_iter().collect();
     per_month.sort();
 
-    let sparse = |counts: &HashMap<NaiveDate, i64>| -> Value {
-        let mut out = Map::new();
-        for (day, n) in counts {
-            out.insert(day.to_string(), json!(n));
-        }
-        Value::Object(out)
+    let sparse = |counts: &HashMap<NaiveDate, i64>| -> Sparse {
+        counts
+            .iter()
+            .map(|(day, n)| (day.to_string(), *n))
+            .collect()
     };
 
-    let mut topic_days = Map::new();
-    for (index, counts) in &by_topic {
-        topic_days.insert(index.to_string(), sparse(counts));
-    }
-    let mut person_days = Map::new();
-    for (key, counts) in &by_person {
-        person_days.insert(key.clone(), sparse(counts));
-    }
-
-    json!({
-        "empty": false,
-        "first": first.to_string(),
-        "last": last.to_string(),
-        "span_days": span_days,
-        "active_days": active,
-        "per_day": days.iter().map(|(d, n)| json!([d.to_string(), n])).collect::<Vec<_>>(),
-        "per_month": per_month.iter().map(|(m, n)| json!([m, n])).collect::<Vec<_>>(),
-        "per_hour": per_hour,
-        "per_weekday": per_weekday,
-        "hour_weekday": hour_weekday.iter().map(|row| json!(row)).collect::<Vec<_>>(),
-        "busiest_day": { "date": busiest_day.to_string(), "messages": busiest_count },
-        "quietest": quietest,
-        "mean_per_active_day": if active > 0 { round1(msgs.len() as f64 / active as f64) } else { 0.0 },
+    Activity {
+        empty: false,
+        first: first.to_string(),
+        last: last.to_string(),
+        span_days,
+        active_days: active,
+        mean_per_active_day: if active > 0 {
+            round1(msgs.len() as f64 / active as f64)
+        } else {
+            0.0
+        },
+        per_day: days
+            .iter()
+            .map(|(d, n)| Count::new(d.to_string(), *n))
+            .collect(),
+        per_month: per_month
+            .into_iter()
+            .map(|(m, n)| Count::new(m, n))
+            .collect(),
+        per_hour,
+        per_weekday,
+        hour_weekday,
+        busiest_day: Busiest {
+            date: busiest_day.to_string(),
+            messages: busiest_count,
+        },
+        quietest,
         // Keyed by topic index and peer key, and **sparse**: the report draws
         // each as a ribbon on the same axis as the whole-archive one, so it
         // densifies against that shared axis at draw time. Storing them dense
         // here costs one entry per person per day of the archive, which for a
         // large group is millions of zeroes nobody reads.
-        "per_day_by_topic": topic_days,
-        "per_day_by_person": person_days,
-    })
+        per_day_by_topic: by_topic
+            .iter()
+            .map(|(index, counts)| (index.to_string(), sparse(counts)))
+            .collect::<BTreeMap<_, _>>(),
+        per_day_by_person: by_person
+            .iter()
+            .map(|(key, counts)| (key.clone(), sparse(counts)))
+            .collect::<BTreeMap<_, _>>(),
+    }
 }

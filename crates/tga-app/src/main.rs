@@ -1,6 +1,5 @@
 //! The Telegram export analyser.
 //!
-//! Ported from `analyser/window.py` and the windowed half of `analyser/main.py`.
 //! `tga` is the same program with the window taken off.
 
 // **A release build is a GUI binary, so double-clicking it does not open a

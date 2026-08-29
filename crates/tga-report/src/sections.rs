@@ -1,6 +1,4 @@
-//! The nine sections of the report, and the small helpers they share.
-//!
-//! Ported from `analyser/report.py`.
+//! The eleven sections of the report, and the small helpers they share.
 //!
 //! **The structure is one shared time axis.** The archive's whole life is drawn
 //! once, full width, at the top; every topic and every person below is drawn as
@@ -20,11 +18,11 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use chrono::NaiveDate;
-use serde_json::Value;
 use tga_notes::{Event, Notes};
+use tga_stats::{Activity, Figure, Stats};
 
 use crate::charts::{self, esc, thousands, Day, Quantiles};
-use crate::stats::{arr, densify, every_count, f, grid, human_bytes, i, ints, number, pairs, s};
+use crate::stats::{densify, every_count, human_bytes, number};
 
 /// The viewBox width every chart on the page is drawn in.
 pub const WIDTH: f64 = 1120.0;
@@ -163,27 +161,29 @@ fn plural(count: i64, singular: &str, plural: &str) -> &'static str {
     }
 }
 
-fn is_empty_activity(activity: &Value) -> bool {
-    activity
-        .get("empty")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+/// An archive with no dated messages in it.
+///
+/// Checked rather than inferred from an empty series, because the two are
+/// different facts: a dump recorded from an export that had nothing in it says
+/// so, and the sections that cannot draw anything say so back.
+fn is_empty_activity(activity: &Activity) -> bool {
+    activity.empty
 }
 
 // ---------------------------------------------------------------------------
 // masthead
 // ---------------------------------------------------------------------------
 
-pub fn masthead(stats: &Value) -> String {
-    let act = &stats["activity"];
-    let info = &stats["export"];
+pub fn masthead(stats: &Stats) -> String {
+    let act = &stats.activity;
+    let info = &stats.export;
     let span = if is_empty_activity(act) {
         "no dated messages".to_string()
     } else {
         format!(
             "{} &ndash; {}",
-            pretty_date(s(act, "first")),
-            pretty_date(s(act, "last"))
+            pretty_date(&act.first),
+            pretty_date(&act.last)
         )
     };
     let mut links = vec![
@@ -200,14 +200,14 @@ pub fn masthead(stats: &Value) -> String {
     // the branch for the same reason the section is: a `--from-stats` dump
     // recorded before `dynamics` existed would otherwise get a nav entry that
     // scrolls nowhere.
-    if stats.get("dynamics").is_some() {
+    if stats.dynamics.is_some() {
         links.insert(4, ("between", "Between people"));
     }
     let toc: String = links
         .iter()
         .map(|(anchor, title)| format!("<a href=\"#{anchor}\">{}</a>", esc(title)))
         .collect();
-    let topics = i(info, "topics");
+    let topics = info.topics as i64;
     // The search box is the one piece of `_timeline`'s data surface this report
     // did not already have. It is a progressive enhancement by construction —
     // everything it filters is rendered server-side and visible before it is
@@ -228,8 +228,8 @@ pub fn masthead(stats: &Value) -> String {
          <button class=\"switch\" id=\"aliases\" aria-pressed=\"false\">Former names</button>\
          <button class=\"switch\" id=\"everyone\" aria-pressed=\"false\">Everyone</button>\
          {find}</div></header>",
-        esc(s(info, "name")),
-        thousands(i(info, "messages")),
+        esc(&info.name),
+        thousands(info.messages as i64),
         plural(topics, "", "s"),
     )
 }
@@ -238,21 +238,21 @@ pub fn masthead(stats: &Value) -> String {
 // timeline
 // ---------------------------------------------------------------------------
 
-pub fn timeline(stats: &Value, notes: &Notes, names: &Names) -> String {
+pub fn timeline(stats: &Stats, notes: &Notes, names: &Names) -> String {
     let events = &notes.events[..];
     let events_note = notes.source.as_str();
-    let act = &stats["activity"];
+    let act = &stats.activity;
     if is_empty_activity(act) {
         return head("Timeline", "", "whole") + "<p>No dated messages.</p></section>";
     }
-    let series = pairs(act, "per_day");
-    let (buckets, per) = charts::bucket_days(&series, WIDTH);
+    let series = &act.per_day;
+    let (buckets, per) = charts::bucket_days(series, WIDTH);
     let top = buckets.iter().map(|(_, _, c)| *c).max().unwrap_or(1);
 
     let kinds: Vec<String> = notes.kinds();
-    let rail = charts::rail(events, &series, WIDTH, 34.0, &kinds);
-    let ribbon = charts::ribbon(&series, WIDTH, 132.0, Some(top), true, "hero");
-    let axis = charts::time_axis(&series, WIDTH, 16.0);
+    let rail = charts::rail(events, series, WIDTH, 34.0, &kinds);
+    let ribbon = charts::ribbon(series, WIDTH, 132.0, Some(top), true, "hero");
+    let axis = charts::time_axis(series, WIDTH, 16.0);
 
     let grain = if per == 1 {
         "day".to_string()
@@ -266,16 +266,16 @@ pub fn timeline(stats: &Value, notes: &Notes, names: &Names) -> String {
         thousands(top)
     );
 
-    let counts = &stats["people"];
-    let talk = &stats["conversation"];
-    let content = &stats["content"];
+    let counts = &stats.people;
+    let talk = &stats.conversation;
+    let content = &stats.content;
     let stat_line = figures(&[
-        (thousands(i(act, "span_days")), "days spanned"),
-        (thousands(i(act, "active_days")), "days with messages"),
-        (thousands(i(counts, "speakers")), "people spoke"),
-        (thousands(i(content, "media_messages")), "attachments"),
-        (thousands(i(counts, "votes_total")), "reactions"),
-        (thousands(i(talk, "replies")), "replies"),
+        (thousands(act.span_days as i64), "days spanned"),
+        (thousands(act.active_days as i64), "days with messages"),
+        (thousands(counts.speakers as i64), "people spoke"),
+        (thousands(content.media_messages), "attachments"),
+        (thousands(counts.votes_total), "reactions"),
+        (thousands(talk.replies), "replies"),
     ]);
 
     let (listing, note) = if events.is_empty() {
@@ -384,18 +384,19 @@ pub fn timeline(stats: &Value, notes: &Notes, names: &Names) -> String {
         )
     };
 
-    let months: Vec<Vec<String>> = pairs(act, "per_month")
-        .into_iter()
-        .map(|(month, count)| vec![esc(&month), thousands(count)])
+    let months: Vec<Vec<String>> = act
+        .per_month
+        .iter()
+        .map(|month| vec![esc(&month.label), thousands(month.n)])
         .collect();
 
-    let coverage = coverage_panel(notes.coverage.as_ref(), &series, act);
+    let coverage = coverage_panel(notes.coverage.as_ref(), series);
 
     format!(
         "{}{rail}{coverage}{ribbon}{axis}{caption}{stat_line}{note}{listing}{}</section>",
         head(
             "Timeline",
-            &format!("{} days", thousands(i(act, "span_days"))),
+            &format!("{} days", thousands(act.span_days as i64)),
             "whole"
         ),
         data_view(
@@ -410,7 +411,7 @@ pub fn timeline(stats: &Value, notes: &Notes, names: &Names) -> String {
 /// Renders nothing when the file states no coverage — an absent claim and a
 /// claim of nothing are different, and inventing "covers everything" from
 /// silence is exactly the reading this block exists to prevent.
-fn coverage_panel(cover: Option<&tga_notes::Coverage>, series: &[Day], act: &Value) -> String {
+fn coverage_panel(cover: Option<&tga_notes::Coverage>, series: &[Day]) -> String {
     let Some(cover) = cover else {
         return String::new();
     };
@@ -431,7 +432,9 @@ fn coverage_panel(cover: Option<&tga_notes::Coverage>, series: &[Day], act: &Val
     // eleven" is the fact and "5 Sep – 5 Oct" only implies it.
     let share = match (cover.from, cover.to, series.first(), series.last()) {
         (Some(from), Some(to), Some(first), Some(last)) => {
-            let whole = (iso_day(&last.0) - iso_day(&first.0)).num_days().max(1);
+            let whole = (iso_day(&last.label) - iso_day(&first.label))
+                .num_days()
+                .max(1);
             let read = (to - from).num_days().max(0) + 1;
             format!(
                 " &#183; {} of {} days",
@@ -452,7 +455,6 @@ fn coverage_panel(cover: Option<&tga_notes::Coverage>, series: &[Day], act: &Val
     } else {
         format!("<p class=\"caption\">{}</p>", esc(&cover.note))
     };
-    let _ = act;
 
     format!("{band}<p class=\"coverage\"><b>Read</b> {span}{share}{level}</p>{note}")
 }
@@ -548,8 +550,8 @@ fn who_line(who: &[String], names: &Names) -> String {
 // rhythm
 // ---------------------------------------------------------------------------
 
-pub fn rhythm(stats: &Value) -> String {
-    let act = &stats["activity"];
+pub fn rhythm(stats: &Stats) -> String {
+    let act = &stats.activity;
     if is_empty_activity(act) {
         return String::new();
     }
@@ -559,10 +561,10 @@ pub fn rhythm(stats: &Value) -> String {
         .map(|s| s.to_string())
         .collect();
 
-    let per_hour = ints(act, "per_hour");
-    let per_weekday = ints(act, "per_weekday");
-    let hour_weekday = grid(act, "hour_weekday");
-    let series = pairs(act, "per_day");
+    let per_hour = act.per_hour;
+    let per_weekday = act.per_weekday;
+    let hour_weekday: Vec<Vec<i64>> = act.hour_weekday.iter().map(|row| row.to_vec()).collect();
+    let series = &act.per_day;
 
     let hour_chart = charts::columns(
         &hours,
@@ -592,8 +594,8 @@ pub fn rhythm(stats: &Value) -> String {
         46.0,
         Some(&grid_scale),
     );
-    let cal_scale = Quantiles::new(series.iter().map(|(_, n)| *n));
-    let cal = charts::calendar(&series, WIDTH, None, Some(&cal_scale));
+    let cal_scale = Quantiles::new(series.iter().map(|day| day.n));
+    let cal = charts::calendar(series, WIDTH, None, Some(&cal_scale));
 
     let full = [
         "Mondays",
@@ -640,7 +642,7 @@ pub fn rhythm(stats: &Value) -> String {
     )
 }
 
-/// The index of the first maximum, as Python's `list.index(max(list))` gives.
+/// The index of the first maximum.
 fn argmax(values: &[i64]) -> usize {
     let top = values.iter().max().copied().unwrap_or(0);
     values.iter().position(|v| *v == top).unwrap_or(0)
@@ -662,47 +664,36 @@ fn presence(dense: &[Day], scale: &Quantiles) -> String {
 // people
 // ---------------------------------------------------------------------------
 
-pub fn people(stats: &Value) -> String {
-    let folk = &stats["people"];
-    let act = &stats["activity"];
-    let rows: Vec<&Value> = arr(folk, "rows")
-        .iter()
-        .filter(|r| i(r, "messages") != 0)
-        .collect();
+pub fn people(stats: &Stats) -> String {
+    let folk = &stats.people;
+    let act = &stats.activity;
+    let rows: Vec<&tga_stats::Person> = folk.rows.iter().filter(|r| r.messages != 0).collect();
     if rows.is_empty() {
         return String::new();
     }
 
-    let series = pairs(act, "per_day");
-    let per_person = act.get("per_day_by_person");
+    let series = &act.per_day;
+    let per_person = &act.per_day_by_person;
     // One scale for every row, built from every person-day in the archive.
     // Shared, so a shade means the same thing in row 1 and row 30.
-    let scale = Quantiles::new(per_person.map(every_count).unwrap_or_default());
+    let scale = Quantiles::new(every_count(per_person));
 
     let mut body = String::new();
     for (index, row) in rows.iter().enumerate() {
-        let dense = densify(
-            per_person.and_then(|branch| branch.get(s(row, "key"))),
-            &series,
-        );
+        let dense = densify(per_person.get(&row.key), series);
         let mini = presence(&dense, &scale);
-        let aliases: Vec<&str> = arr(row, "aliases")
-            .iter()
-            .filter_map(Value::as_str)
-            .collect();
-        let alias = if aliases.is_empty() {
+        let alias = if row.aliases.is_empty() {
             String::new()
         } else {
             format!(
                 " <span class=\"alias\">was {}</span>",
-                esc(&aliases.join(", "))
+                esc(&row.aliases.join(", "))
             )
         };
-        let role_name = s(row, "role");
-        let role = if role_name.is_empty() || role_name == "member" {
+        let role = if row.role.is_empty() || row.role == "member" {
             String::new()
         } else {
-            format!(" <span class=\"role\">{}</span>", esc(role_name))
+            format!(" <span class=\"role\">{}</span>", esc(&row.role))
         };
         let cls = if index >= PEOPLE_SHOWN {
             " class=\"overflow\""
@@ -717,13 +708,13 @@ pub fn people(stats: &Value) -> String {
              <td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td>\
              <td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td></tr>",
             index + 1,
-            esc(s(row, "name")),
-            thousands(i(row, "messages")),
-            pct(f(row, "share")),
-            number(row, "avg_words"),
-            thousands(i(row, "reactions_received")),
-            esc(&pretty_date(s(row, "first"))),
-            esc(&pretty_date(s(row, "last"))),
+            esc(&row.name),
+            thousands(row.messages),
+            pct(row.share),
+            number(row.avg_words),
+            thousands(row.reactions_received),
+            esc(&pretty_date(row.first.as_deref().unwrap_or_default())),
+            esc(&pretty_date(row.last.as_deref().unwrap_or_default())),
         );
     }
 
@@ -745,33 +736,32 @@ pub fn people(stats: &Value) -> String {
     };
 
     let mut silent = String::new();
-    if i(folk, "silent_members") != 0 {
+    if folk.silent_members != 0 {
         silent = format!(
             "<p class=\"note\">{} of the {} people on the member list never posted, \
              so they appear nowhere above.</p>",
-            i(folk, "silent_members"),
-            i(folk, "known_members")
+            folk.silent_members, folk.known_members
         );
     }
-    if folk.get("roster_complete") == Some(&Value::Bool(false)) {
+    if folk.roster_complete == Some(false) {
         silent.push_str(
             "<p class=\"note\">The member list in this export is incomplete, \
              so the count of people who never posted is a floor.</p>",
         );
     }
 
-    let awards_branch = arr(stats, "awards");
-    let awards = if awards_branch.is_empty() {
+    let awards = if stats.awards.is_empty() {
         String::new()
     } else {
-        let cells: String = awards_branch
+        let cells: String = stats
+            .awards
             .iter()
             .map(|a| {
                 format!(
                     "<li><b>{}</b><span>{}: {}</span></li>",
-                    esc(s(a, "value")),
-                    esc(s(a, "title")),
-                    esc(s(a, "name"))
+                    esc(&a.value),
+                    esc(&a.title),
+                    esc(&a.name)
                 )
             })
             .collect();
@@ -783,28 +773,26 @@ pub fn people(stats: &Value) -> String {
         )
     };
 
-    let streak_branch = &stats["streak"];
-    let streak = if streak_branch.get("name").is_none() {
-        String::new()
-    } else {
-        format!(
+    let streak = match &stats.streak {
+        None => String::new(),
+        Some(run) => format!(
             "<p class=\"note\">Longest unbroken run of days posted on: {}, {} days to {}.</p>",
-            esc(s(streak_branch, "name")),
-            i(streak_branch, "days"),
-            esc(&pretty_date(s(streak_branch, "ended")))
-        )
+            esc(&run.name),
+            run.days,
+            esc(&pretty_date(&run.ended))
+        ),
     };
 
     let votes = format!(
         "<p class=\"note\">Reactions given are a floor, not a total: Telegram \
          names at most three reactors per message and never names an anonymous \
          one. {} of {} reactions in this archive have a name on them.</p>",
-        thousands(i(folk, "votes_named")),
-        thousands(i(folk, "votes_total"))
+        thousands(folk.votes_named),
+        thousands(folk.votes_total)
     );
 
-    let known = i(folk, "known_members");
-    let count = format!("{} spoke", i(folk, "speakers"))
+    let known = folk.known_members;
+    let count = format!("{} spoke", folk.speakers)
         + &if known != 0 {
             format!(" &#183; {known} on the member list")
         } else {
@@ -817,7 +805,7 @@ pub fn people(stats: &Value) -> String {
          at the top of the page, and its shading is on one scale shared by \
          every row. {}</p>{listing}{more}{silent}{streak}{awards}{votes}</section>",
         head("People", &count, "people"),
-        pct(f(folk, "top3_share")),
+        pct(folk.top3_share),
         esc(&scale.caption("messages in a day"))
     )
 }
@@ -826,36 +814,35 @@ pub fn people(stats: &Value) -> String {
 // conversation
 // ---------------------------------------------------------------------------
 
-pub fn conversation(stats: &Value, names: &Names) -> String {
-    let talk = &stats["conversation"];
+pub fn conversation(stats: &Stats, names: &Names) -> String {
+    let talk = &stats.conversation;
     let stat_line = figures(&[
-        (thousands(i(talk, "replies")), "replies"),
-        (pct(f(talk, "reply_share")), "of messages are replies"),
+        (thousands(talk.replies), "replies"),
+        (pct(talk.reply_share), "of messages are replies"),
         (
-            esc(&duration(f(talk, "latency_median"))),
+            esc(&duration(talk.latency_median as f64)),
             "median time to reply",
         ),
-        (esc(&duration(f(talk, "latency_p90"))), "90th percentile"),
-        (thousands(i(talk, "sessions")), "bursts of talk"),
+        (esc(&duration(talk.latency_p90 as f64)), "90th percentile"),
+        (thousands(talk.sessions as i64), "bursts of talk"),
         (
-            thousands(i(talk, "session_median_messages")),
+            thousands(talk.session_median_messages),
             "messages in a typical burst",
         ),
     ]);
 
-    let fastest = arr(talk, "fastest");
-    let fast = if fastest.is_empty() {
+    let fast = if talk.fastest.is_empty() {
         String::new()
     } else {
         // Slowest first, so the bar length is the wait itself. Inverting it to
         // put the fastest on the longest bar reads better and lies: the mark
         // would no longer be the number printed beside it.
-        let slowest: Vec<&Value> = fastest.iter().take(12).rev().collect();
+        let slowest: Vec<&tga_stats::Latency> = talk.fastest.iter().take(12).rev().collect();
         let rows: Vec<charts::BarRow> = slowest
             .iter()
             .map(|r| {
-                let median = f(r, "median");
-                (s(r, "name").to_string(), median, duration(median))
+                let median = r.median as f64;
+                (r.name.clone(), median, duration(median))
             })
             .collect();
         let bars = charts::bars_h(&rows, WIDTH, 22.0, 250.0, 64.0);
@@ -865,12 +852,12 @@ pub fn conversation(stats: &Value, names: &Names) -> String {
              <p class=\"caption\">Median gap between a message and their reply to it, \
              for anyone with five replies or more. Shorter is faster; {} is quickest \
              at {}.</p>",
-            esc(s(quickest, "name")),
-            esc(&duration(f(quickest, "median")))
+            esc(&quickest.name),
+            esc(&duration(quickest.median as f64))
         )
     };
 
-    let edges = arr(talk, "edges");
+    let edges = &talk.edges;
     let matrix_html = if edges.is_empty() {
         String::new()
     } else {
@@ -886,9 +873,8 @@ pub fn conversation(stats: &Value, names: &Names) -> String {
             *entry += count;
         };
         for edge in edges {
-            let count = i(edge, "count");
-            bump(s(edge, "from"), count, &mut order);
-            bump(s(edge, "to"), count, &mut order);
+            bump(&edge.from, edge.count, &mut order);
+            bump(&edge.to, edge.count, &mut order);
         }
         let mut keys = order.clone();
         keys.sort_by_key(|k| std::cmp::Reverse(volume[k]));
@@ -901,9 +887,10 @@ pub fn conversation(stats: &Value, names: &Names) -> String {
             .collect();
         let mut cells = vec![vec![0i64; keys.len()]; keys.len()];
         for edge in edges {
-            if let (Some(&from), Some(&to)) = (index.get(s(edge, "from")), index.get(s(edge, "to")))
+            if let (Some(&from), Some(&to)) =
+                (index.get(edge.from.as_str()), index.get(edge.to.as_str()))
             {
-                cells[from][to] += i(edge, "count");
+                cells[from][to] += edge.count;
             }
         }
         let labels: Vec<String> = keys.iter().map(|k| label_for(names, k)).collect();
@@ -918,35 +905,36 @@ pub fn conversation(stats: &Value, names: &Names) -> String {
         )
     };
 
-    let net = &stats["graph"];
-    let nodes = arr(net, "nodes");
-    let network_html = if nodes.is_empty() {
+    let net = &stats.graph;
+    let network_html = if net.nodes.is_empty() {
         String::new()
     } else {
-        let drawn: Vec<charts::Node> = nodes
+        let drawn: Vec<charts::Node> = net
+            .nodes
             .iter()
             .map(|n| charts::Node {
-                key: s(n, "key").to_string(),
-                x: f(n, "x"),
-                y: f(n, "y"),
-                size: f(n, "size"),
-                messages: i(n, "messages"),
-                degree: i(n, "degree"),
+                key: n.key.clone(),
+                x: n.x,
+                y: n.y,
+                size: n.size,
+                messages: n.messages,
+                degree: n.degree,
             })
             .collect();
-        let links: Vec<charts::Link> = arr(net, "edges")
+        let links: Vec<charts::Link> = net
+            .edges
             .iter()
             .map(|e| charts::Link {
-                a: s(e, "a").to_string(),
-                b: s(e, "b").to_string(),
-                weight: i(e, "weight"),
+                a: e.a.clone(),
+                b: e.b.clone(),
+                weight: e.weight,
             })
             .collect();
         let labels: Names = drawn
             .iter()
             .map(|n| (n.key.clone(), label_for(names, &n.key)))
             .collect();
-        let hidden = i(net, "hidden");
+        let hidden = net.hidden;
         format!(
             "<h3>Who is in contact with whom</h3>{}\
              <p class=\"caption\">Replies and reactions pooled and drawn \
@@ -964,17 +952,14 @@ pub fn conversation(stats: &Value, names: &Names) -> String {
         )
     };
 
-    let starter_rows = arr(talk, "starters");
-    let starters = if starter_rows.is_empty() {
+    let starters = if talk.starters.is_empty() {
         String::new()
     } else {
-        let rows: Vec<charts::BarRow> = starter_rows
+        let rows: Vec<charts::BarRow> = talk
+            .starters
             .iter()
             .take(10)
-            .map(|st| {
-                let count = i(st, "count");
-                (s(st, "name").to_string(), count as f64, thousands(count))
-            })
+            .map(|st| (st.name.clone(), st.count as f64, thousands(st.count)))
             .collect();
         format!(
             "<h3>Who breaks the silence</h3>{}\
@@ -983,7 +968,7 @@ pub fn conversation(stats: &Value, names: &Names) -> String {
         )
     };
 
-    let orphans = i(talk, "orphan_replies");
+    let orphans = talk.orphan_replies;
     let orphan = if orphans == 0 {
         String::new()
     } else {
@@ -999,7 +984,7 @@ pub fn conversation(stats: &Value, names: &Names) -> String {
          conversations.</p>{stat_line}{fast}{starters}{matrix_html}{network_html}{orphan}</section>",
         head(
             "Conversation",
-            &format!("{} bursts", thousands(i(talk, "sessions"))),
+            &format!("{} bursts", thousands(talk.sessions as i64)),
             "talk"
         )
     )
@@ -1028,31 +1013,31 @@ fn label_for(names: &Names, key: &str) -> String {
 ///
 /// It renders nothing at all when the branch is absent, which is the ordinary
 /// case for a `--from-stats` dump recorded before the branch existed.
-pub fn between(stats: &Value) -> String {
-    let dyn_ = match stats.get("dynamics") {
-        Some(branch) if branch.get("empty") != Some(&Value::Bool(true)) => branch,
+pub fn between(stats: &Stats) -> String {
+    let dynamics = match &stats.dynamics {
+        Some(branch) if !branch.empty => branch,
         _ => return String::new(),
     };
     let (pairs_b, answer, tenure, retention, depth) = (
-        &dyn_["pairs"],
-        &dyn_["answer"],
-        &dyn_["tenure"],
-        &dyn_["retention"],
-        &dyn_["depth"],
+        &dynamics.pairs,
+        &dynamics.answer,
+        &dynamics.tenure,
+        &dynamics.retention,
+        &dynamics.depth,
     );
 
     // -- who talks with whom ------------------------------------------------
-    let rows = arr(pairs_b, "rows");
+    let rows = &pairs_b.rows;
     let bars: Vec<charts::BarRow> = rows
         .iter()
         .map(|row| {
             (
-                format!("{} & {}", s(row, "a_name"), s(row, "b_name")),
-                i(row, "both") as f64,
+                format!("{} & {}", row.a_name, row.b_name),
+                row.both as f64,
                 format!(
                     "{} \u{2194} {}",
-                    thousands(i(row, "a_to_b")),
-                    thousands(i(row, "b_to_a"))
+                    thousands(row.a_to_b),
+                    thousands(row.b_to_a)
                 ),
             )
         })
@@ -1066,26 +1051,26 @@ pub fn between(stats: &Value) -> String {
         .iter()
         .map(|row| {
             vec![
-                short(s(row, "a_name"), 26),
-                short(s(row, "b_name"), 26),
-                thousands(i(row, "a_to_b")),
-                thousands(i(row, "b_to_a")),
-                pct(f(row, "balance")),
+                short(&row.a_name, 26),
+                short(&row.b_name, 26),
+                thousands(row.a_to_b),
+                thousands(row.b_to_a),
+                pct(row.balance),
             ]
         })
         .collect();
 
     // -- when an answer arrives ---------------------------------------------
     let hours: Vec<String> = (0..24).map(|h| format!("{h:02}")).collect();
-    let medians = ints(answer, "medians");
-    let counts = ints(answer, "counts");
-    let floor = i(answer, "minimum");
+    let medians = answer.medians;
+    let counts = answer.counts;
+    let floor = answer.minimum;
     // An hour that has not met the floor is drawn as nothing rather than as a
     // short bar. A median over four replies is not a fast hour, and a bar is
     // read as one.
     let shown: Vec<i64> = medians
         .iter()
-        .zip(&counts)
+        .zip(counts.iter())
         .map(|(m, n)| if *n >= floor { *m } else { 0 })
         .collect();
     let answer_chart = if shown.iter().all(|v| *v == 0) {
@@ -1103,7 +1088,7 @@ pub fn between(stats: &Value) -> String {
     };
     let answer_rows: Vec<Vec<String>> = medians
         .iter()
-        .zip(&counts)
+        .zip(counts.iter())
         .enumerate()
         .map(|(hour, (median, n))| {
             vec![
@@ -1119,13 +1104,13 @@ pub fn between(stats: &Value) -> String {
         .collect();
 
     // -- how far a thread runs ----------------------------------------------
-    let buckets = pairs(depth, "buckets");
+    let buckets = &depth.buckets;
     let depth_chart = if buckets.is_empty() {
         String::new()
     } else {
         charts::columns(
-            &buckets.iter().map(|(l, _)| l.clone()).collect::<Vec<_>>(),
-            &buckets.iter().map(|(_, n)| *n).collect::<Vec<_>>(),
+            &buckets.iter().map(|b| b.label.clone()).collect::<Vec<_>>(),
+            &buckets.iter().map(|b| b.n).collect::<Vec<_>>(),
             WIDTH / 2.0 - 28.0,
             190.0,
             1,
@@ -1135,15 +1120,12 @@ pub fn between(stats: &Value) -> String {
     };
 
     // -- month over month ---------------------------------------------------
-    let months: Vec<String> = arr(retention, "months")
-        .iter()
-        .filter_map(|m| m.as_str().map(str::to_string))
-        .collect();
+    let months = &retention.months;
     let (active, fresh, back, lost) = (
-        ints(retention, "active"),
-        ints(retention, "new"),
-        ints(retention, "returning"),
-        ints(retention, "lost"),
+        &retention.active,
+        &retention.new,
+        &retention.returning,
+        &retention.lost,
     );
     let label_every = (months.len() / 12).max(1);
     let ret_chart = if months.is_empty() {
@@ -1154,7 +1136,7 @@ pub fn between(stats: &Value) -> String {
                 .iter()
                 .map(|m| m[2..].to_string())
                 .collect::<Vec<_>>(),
-            &back,
+            back,
             WIDTH,
             170.0,
             label_every,
@@ -1169,33 +1151,33 @@ pub fn between(stats: &Value) -> String {
             let cell = |series: &[i64]| thousands(series.get(at).copied().unwrap_or(0));
             vec![
                 esc(month),
-                cell(&active),
-                cell(&fresh),
-                cell(&back),
-                cell(&lost),
+                cell(active),
+                cell(fresh),
+                cell(back),
+                cell(lost),
             ]
         })
         .collect();
 
     // -- who is still here --------------------------------------------------
-    let people = arr(tenure, "rows");
     // Ranked by the silence rather than by the message count, because that is
     // the one ordering the People table cannot already give you.
-    let mut quiet: Vec<&Value> = people
+    let mut quiet: Vec<&tga_stats::TenureRow> = tenure
+        .rows
         .iter()
-        .filter(|row| s(row, "status") != "active")
+        .filter(|row| row.status != "active")
         .collect();
-    quiet.sort_by_key(|row| std::cmp::Reverse(i(row, "dormant_days")));
+    quiet.sort_by_key(|row| std::cmp::Reverse(row.dormant_days));
     let quiet_rows: Vec<Vec<String>> = quiet
         .iter()
         .take(PEOPLE_SHOWN)
         .map(|row| {
             vec![
-                short(s(row, "name"), 30),
-                thousands(i(row, "messages")),
-                esc(&pretty_date(s(row, "last"))),
-                thousands(i(row, "dormant_days")),
-                esc(s(row, "status")),
+                short(&row.name, 30),
+                thousands(row.messages),
+                esc(&pretty_date(&row.last)),
+                thousands(row.dormant_days),
+                esc(&row.status),
             ]
         })
         .collect();
@@ -1216,11 +1198,11 @@ pub fn between(stats: &Value) -> String {
         )
     };
 
-    let counted = i(answer, "counted");
+    let counted = answer.counted;
     let stat_line = format!(
         "{} mutual, {} one-way",
-        thousands(i(pairs_b, "mutual")),
-        thousands(i(pairs_b, "one_way"))
+        thousands(pairs_b.mutual),
+        thousands(pairs_b.one_way)
     );
 
     let mut out = head("Between people", &stat_line, "between");
@@ -1228,15 +1210,12 @@ pub fn between(stats: &Value) -> String {
         out,
         "{}",
         figures(&[
-            (
-                thousands(i(pairs_b, "mutual")),
-                "pairs answering each other"
-            ),
-            (thousands(i(tenure, "active")), "still posting"),
-            (thousands(i(tenure, "fading")), "gone quiet"),
-            (thousands(i(tenure, "gone")), "long gone"),
-            (pct(f(retention, "kept_mean")), "kept month to month"),
-            (thousands(i(depth, "max")), "deepest chain"),
+            (thousands(pairs_b.mutual), "pairs answering each other"),
+            (thousands(tenure.active), "still posting"),
+            (thousands(tenure.fading), "gone quiet"),
+            (thousands(tenure.gone), "long gone"),
+            (pct(retention.kept_mean), "kept month to month"),
+            (thousands(depth.max), "deepest chain"),
         ])
     );
 
@@ -1249,8 +1228,8 @@ pub fn between(stats: &Value) -> String {
              The two numbers are replies each way. A pair that only ever runs \
              one way is somebody being answered, not a correspondence &#8212; \
              {} of the {} pairs here are that.</p>{}",
-            thousands(i(pairs_b, "one_way")),
-            thousands(i(pairs_b, "mutual") + i(pairs_b, "one_way")),
+            thousands(pairs_b.one_way),
+            thousands(pairs_b.mutual + pairs_b.one_way),
             data_view(
                 "Correspondents, as numbers",
                 &table(
@@ -1287,7 +1266,7 @@ pub fn between(stats: &Value) -> String {
         },
         thousands(floor),
         thousands(counted),
-        duration(i(answer, "cap") as f64),
+        duration(answer.cap as f64),
         if depth_chart.is_empty() {
             "<p class=\"caption\">Nothing in this archive was replied to.</p>".to_string()
         } else {
@@ -1333,9 +1312,9 @@ pub fn between(stats: &Value) -> String {
          <p class=\"caption\">Measured against {}, the last day in this archive, \
          not against today &#8212; the same file read a year from now says the \
          same thing. Quiet past {} days, gone past {}.</p></section>",
-        esc(&pretty_date(s(tenure, "as_of"))),
-        thousands(i(tenure, "active_within")),
-        thousands(i(tenure, "fading_within")),
+        esc(&pretty_date(&tenure.as_of)),
+        thousands(tenure.active_within),
+        thousands(tenure.fading_within),
     );
     out
 }
@@ -1344,9 +1323,9 @@ pub fn between(stats: &Value) -> String {
 // what was said
 // ---------------------------------------------------------------------------
 
-pub fn said(stats: &Value) -> String {
-    let content = &stats["content"];
-    let kinds = arr(content, "media_kinds");
+pub fn said(stats: &Stats) -> String {
+    let content = &stats.content;
+    let kinds = &content.media_kinds;
     let media_chart = if kinds.is_empty() {
         String::new()
     } else {
@@ -1354,26 +1333,22 @@ pub fn said(stats: &Value) -> String {
             .iter()
             .map(|k| {
                 (
-                    s(k, "label").to_string(),
-                    i(k, "sent") as f64,
-                    format!(
-                        "{}  {}",
-                        thousands(i(k, "sent")),
-                        human_bytes(i(k, "bytes"))
-                    ),
+                    k.label.clone(),
+                    k.sent as f64,
+                    format!("{}  {}", thousands(k.sent), human_bytes(k.bytes)),
                 )
             })
             .collect();
         charts::bars_h(&rows, WIDTH, 22.0, 140.0, 64.0)
     };
 
-    let lengths = pairs(content, "lengths");
+    let lengths = &content.lengths;
     // Narrower than the measure on purpose. Nine buckets across the full page
     // gives 124px bands, and a column capped at 24px inside one of those reads
     // as nine unrelated marks rather than as a distribution.
     let length_chart = charts::columns(
-        &lengths.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
-        &lengths.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+        &lengths.iter().map(|b| b.label.clone()).collect::<Vec<_>>(),
+        &lengths.iter().map(|b| b.n).collect::<Vec<_>>(),
         WIDTH * 0.56,
         210.0,
         1,
@@ -1381,35 +1356,34 @@ pub fn said(stats: &Value) -> String {
         None,
     );
 
-    let symbol_rows = |branch: &str, title: &str| -> String {
-        let items = pairs(content, branch);
+    let symbol_rows = |items: &[tga_stats::Count], title: &str| -> String {
         if items.is_empty() {
             return String::new();
         }
         let cells: String = items
             .iter()
             .take(10)
-            .map(|(sym, count)| {
+            .map(|item| {
                 format!(
                     "<li><b>{}</b><span>{}</span></li>",
-                    esc(sym),
-                    thousands(*count)
+                    esc(&item.label),
+                    thousands(item.n)
                 )
             })
             .collect();
         format!("<h3>{title}</h3><ul class=\"figures\">{cells}</ul>")
     };
-    let emoji_rows = symbol_rows("emoji", "Most-used emoji");
-    let sticker_rows = symbol_rows("stickers", "Favourite stickers");
+    let emoji_rows = symbol_rows(&content.emoji, "Most-used emoji");
+    let sticker_rows = symbol_rows(&content.stickers, "Favourite stickers");
 
-    let domains = pairs(content, "domains");
+    let domains = &content.domains;
     let links = if domains.is_empty() {
         String::new()
     } else {
         let rows: Vec<charts::BarRow> = domains
             .iter()
             .take(14)
-            .map(|(host, count)| (host.clone(), *count as f64, thousands(*count)))
+            .map(|host| (host.label.clone(), host.n as f64, thousands(host.n)))
             .collect();
         format!(
             "<h3>Where the links went</h3>{}",
@@ -1418,12 +1392,12 @@ pub fn said(stats: &Value) -> String {
     };
 
     let mut tag_cols = String::new();
-    let hashtags = pairs(content, "hashtags");
+    let hashtags = &content.hashtags;
     if !hashtags.is_empty() {
         let rows: Vec<Vec<String>> = hashtags
             .iter()
             .take(12)
-            .map(|(tag, n)| vec![format!("#{}", esc(tag)), thousands(*n)])
+            .map(|tag| vec![format!("#{}", esc(&tag.label)), thousands(tag.n)])
             .collect();
         let _ = write!(
             tag_cols,
@@ -1431,12 +1405,12 @@ pub fn said(stats: &Value) -> String {
             table(&[("Tag", false), ("Uses", true)], &rows)
         );
     }
-    let mentions = pairs(content, "mentions");
+    let mentions = &content.mentions;
     if !mentions.is_empty() {
         let rows: Vec<Vec<String>> = mentions
             .iter()
             .take(12)
-            .map(|(who, n)| vec![esc(who), thousands(*n)])
+            .map(|who| vec![esc(&who.label), thousands(who.n)])
             .collect();
         let _ = write!(
             tag_cols,
@@ -1450,14 +1424,14 @@ pub fn said(stats: &Value) -> String {
         format!("<div class=\"cols2\">{tag_cols}</div>")
     };
 
-    let sources = pairs(content, "forward_sources");
+    let sources = &content.forward_sources;
     let forwards = if sources.is_empty() {
         String::new()
     } else {
         let rows: Vec<Vec<String>> = sources
             .iter()
             .take(12)
-            .map(|(name, n)| vec![esc(name), thousands(*n)])
+            .map(|src| vec![esc(&src.label), thousands(src.n)])
             .collect();
         format!(
             "<h3>Forwarded from</h3>{}",
@@ -1465,17 +1439,17 @@ pub fn said(stats: &Value) -> String {
         )
     };
 
-    let saved = i(content, "media_saved");
-    let total = i(content, "media_messages");
+    let saved = content.media_saved;
+    let total = content.media_messages;
     let skipped = total - saved;
-    let messages = i(content, "messages");
+    let messages = content.messages as i64;
     let stat_line = figures(&[
-        (thousands(i(content, "total_words")), "words"),
-        (number(content, "mean_words"), "words in a typical message"),
+        (thousands(content.total_words), "words"),
+        (number(content.mean_words), "words in a typical message"),
         (thousands(total), "messages with an attachment"),
-        (esc(&human_bytes(i(content, "media_bytes"))), "shared"),
-        (thousands(i(content, "links_total")), "links"),
-        (thousands(i(content, "edited")), "edited afterwards"),
+        (esc(&human_bytes(content.media_bytes)), "shared"),
+        (thousands(content.links_total), "links"),
+        (thousands(content.edited), "edited afterwards"),
     ]);
 
     let skip_note = if skipped > 0 {
@@ -1492,8 +1466,8 @@ pub fn said(stats: &Value) -> String {
 
     let no_text = lengths
         .iter()
-        .find(|(name, _)| name == "no text")
-        .map(|(_, n)| *n)
+        .find(|bucket| bucket.label == "no text")
+        .map(|bucket| bucket.n)
         .unwrap_or(0);
 
     let attachments = if media_chart.is_empty() {
@@ -1506,10 +1480,10 @@ pub fn said(stats: &Value) -> String {
         .iter()
         .map(|k| {
             vec![
-                esc(s(k, "label")),
-                thousands(i(k, "sent")),
-                thousands(i(k, "saved")),
-                esc(&human_bytes(i(k, "bytes"))),
+                esc(&k.label),
+                thousands(k.sent),
+                thousands(k.saved),
+                esc(&human_bytes(k.bytes)),
             ]
         })
         .collect();
@@ -1546,13 +1520,9 @@ pub fn said(stats: &Value) -> String {
 // ---------------------------------------------------------------------------
 
 /// The inner markup of the churn section; [`crate::render`] wraps it.
-pub fn churn(stats: &Value) -> String {
-    let churn = &stats["churn"];
-    let months: Vec<String> = arr(churn, "months")
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect();
+pub fn churn(stats: &Stats) -> String {
+    let churn = &stats.churn;
+    let months = &churn.months;
     if months.is_empty() {
         return String::new();
     }
@@ -1561,22 +1531,22 @@ pub fn churn(stats: &Value) -> String {
 
     let active = charts::columns(
         &labels,
-        &ints(churn, "active"),
+        &churn.active.iter().map(|n| *n as i64).collect::<Vec<_>>(),
         WIDTH,
         200.0,
         every,
         " people",
         None,
     );
-    let leaves: i64 = ints(churn, "announced_leaves").iter().sum();
+    let leaves: i64 = churn.announced_leaves.iter().sum();
     // No member list means no dated arrivals — a Telegram Desktop export never
     // has one, and neither does ours if the roster was not fetched. Drawing an
     // empty chart there says "nobody joined", which is a different claim from
     // "this export cannot tell you".
-    let roster_joins = ints(churn, "roster_joins");
+    let roster_joins = &churn.roster_joins;
     let dated: i64 = roster_joins.iter().sum();
     let joins = if dated != 0 {
-        charts::columns(&labels, &roster_joins, WIDTH, 170.0, every, " joined", None)
+        charts::columns(&labels, roster_joins, WIDTH, 170.0, every, " joined", None)
     } else {
         String::new()
     };
@@ -1587,8 +1557,8 @@ pub fn churn(stats: &Value) -> String {
              knows only about people who are still in the group: {} of {} current \
              members carry a join date. Anyone who has since left is missing from \
              it entirely{}</p>",
-            thousands(i(churn, "roster_dated")),
-            thousands(i(churn, "roster_size")),
+            thousands(churn.roster_dated),
+            thousands(churn.roster_size as i64),
             if leaves != 0 {
                 format!(
                     ", though the history announces {} removals.",
@@ -1599,7 +1569,7 @@ pub fn churn(stats: &Value) -> String {
             }
         )
     } else {
-        let announced: i64 = ints(churn, "announced_joins").iter().sum();
+        let announced: i64 = churn.announced_joins.iter().sum();
         format!(
             "<p class=\"caption\">This export carries no member list, so arrivals \
              cannot be dated{}</p>",
@@ -1632,23 +1602,23 @@ pub fn churn(stats: &Value) -> String {
 // topics
 // ---------------------------------------------------------------------------
 
-pub fn topics(stats: &Value) -> String {
-    let rows = arr(stats, "topics");
-    let act = &stats["activity"];
+pub fn topics(stats: &Stats) -> String {
+    let rows = &stats.topics;
+    let act = &stats.activity;
     if rows.is_empty() {
         return String::new();
     }
-    let series = pairs(act, "per_day");
-    let by_topic = act.get("per_day_by_topic");
-    let scale = Quantiles::new(by_topic.map(every_count).unwrap_or_default());
+    let series = &act.per_day;
+    let by_topic = &act.per_day_by_topic;
+    let scale = Quantiles::new(every_count(by_topic));
 
     let mut body = String::new();
     for topic in rows {
-        let key = i(topic, "index").to_string();
+        let key = topic.index.to_string();
         let mini = if series.is_empty() {
             String::new()
         } else {
-            let dense = densify(by_topic.and_then(|branch| branch.get(&key)), &series);
+            let dense = densify(by_topic.get(&key), series);
             presence(&dense, &scale)
         };
         let _ = write!(
@@ -1657,14 +1627,17 @@ pub fn topics(stats: &Value) -> String {
              <td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td>\
              <td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td>\
              <td>{}</td></tr>",
-            esc(s(topic, "name")),
-            thousands(i(topic, "messages")),
-            thousands(i(topic, "voices")),
-            number(topic, "avg_words"),
-            thousands(i(topic, "media")),
-            thousands(i(topic, "replies")),
-            thousands(i(topic, "reactions")),
-            short(s(topic, "top"), 22)
+            esc(&topic.name),
+            thousands(topic.messages as i64),
+            thousands(topic.voices as i64),
+            // A topic nobody posted in carries no average at all, and the cell
+            // reads `0` rather than being left blank -- the column is numeric
+            // and a hole in it looks like a rendering fault.
+            topic.avg_words.map_or_else(|| "0".to_string(), number),
+            thousands(topic.media as i64),
+            thousands(topic.replies as i64),
+            thousands(topic.reactions),
+            short(&topic.top, 22)
         );
     }
     let headers = "<tr><th>Topic</th><th>Activity</th><th class=\"n\">Messages</th>\
@@ -1684,40 +1657,39 @@ pub fn topics(stats: &Value) -> String {
 // records
 // ---------------------------------------------------------------------------
 
-pub fn records(stats: &Value) -> String {
-    let items = arr(stats, "superlatives");
+pub fn records(stats: &Stats) -> String {
+    let items = &stats.superlatives;
     if items.is_empty() {
         return String::new();
     }
     let mut body = String::new();
     for item in items {
         // A superlative's value is a count for most records and a formatted
-        // string for one — the largest file, which is already `1.8 MB`.
-        let value = match item.get("value") {
-            Some(Value::Number(n)) if n.is_i64() => thousands(n.as_i64().unwrap_or(0)),
-            Some(Value::String(text)) => esc(text),
-            Some(other) => esc(&other.to_string()),
-            None => String::new(),
+        // string for one — the largest file, which is already `1.8 MB`. The
+        // count gets its group separators; the text is escaped as it stands.
+        let value = match &item.value {
+            Figure::Count(n) => thousands(*n),
+            Figure::Text(text) => esc(text),
         };
-        let unit = if s(item, "unit").is_empty() {
+        let unit = if item.unit.is_empty() {
             String::new()
         } else {
-            format!(" <span class=\"num\">{}</span>", esc(s(item, "unit")))
+            format!(" <span class=\"num\">{}</span>", esc(&item.unit))
         };
-        let mut about = esc(s(item, "date"));
-        if !s(item, "who").is_empty() {
-            let _ = write!(about, " &#183; {}", esc(s(item, "who")));
+        let mut about = esc(&item.date);
+        if !item.who.is_empty() {
+            let _ = write!(about, " &#183; {}", esc(&item.who));
         }
-        let detail = if s(item, "text").is_empty() {
+        let detail = if item.text.is_empty() {
             String::new()
         } else {
-            format!("<br><span>{}</span>", esc(s(item, "text")))
+            format!("<br><span>{}</span>", esc(&item.text))
         };
         let _ = write!(
             body,
             "<li><span class=\"what\">{}</span><span class=\"big\">{value}</span>\
              <span class=\"about\">{about}{unit}{detail}</span></li>",
-            esc(s(item, "title"))
+            esc(&item.title)
         );
     }
     format!(
@@ -1730,9 +1702,9 @@ pub fn records(stats: &Value) -> String {
 // notes
 // ---------------------------------------------------------------------------
 
-pub fn notes(stats: &Value, events_note: &str, source: &str, stamp: &str) -> String {
-    let talk = &stats["conversation"];
-    let folk = &stats["people"];
+pub fn notes(stats: &Stats, events_note: &str, source: &str, stamp: &str) -> String {
+    let talk = &stats.conversation;
+    let folk = &stats.people;
     let mut lines: Vec<(&str, String)> = vec![
         (
             "Time",
@@ -1758,7 +1730,7 @@ pub fn notes(stats: &Value, events_note: &str, source: &str, stamp: &str) -> Str
              opened the topic. Those are not answers to anybody and are \
              not counted. Replies to your own message are counted as \
              replies ({} of them) but are left out of who-answers-whom.",
-                thousands(i(talk, "self_replies"))
+                thousands(talk.self_replies)
             ),
         ),
         (
@@ -1767,8 +1739,8 @@ pub fn notes(stats: &Value, events_note: &str, source: &str, stamp: &str) -> Str
                 "Telegram names at most three reactors per message, and \
              never names anyone who reacted anonymously. Reaction \
              totals are exact; who gave them is a floor ({} of {} are attributed).",
-                thousands(i(folk, "votes_named")),
-                thousands(i(folk, "votes_total"))
+                thousands(folk.votes_named),
+                thousands(folk.votes_total)
             ),
         ),
         (
@@ -1776,7 +1748,7 @@ pub fn notes(stats: &Value, events_note: &str, source: &str, stamp: &str) -> Str
             format!(
                 "A gap longer than {} minutes ends one and starts the next, \
              counted separately per topic.",
-                i(talk, "session_gap") / 60
+                talk.session_gap / 60
             ),
         ),
         (
@@ -1830,7 +1802,7 @@ pub fn notes(stats: &Value, events_note: &str, source: &str, stamp: &str) -> Str
          it is derived entirely from the export on disk.</p></section>",
         head("Notes", "how to read this", "notes"),
         esc(source),
-        esc(s(&stats["export"], "root"))
+        esc(&stats.export.root)
     )
 }
 
@@ -1879,7 +1851,7 @@ mod tests {
     }
 
     #[test]
-    fn argmax_takes_the_first_maximum_the_way_python_index_does() {
+    fn argmax_takes_the_first_maximum_rather_than_the_last() {
         assert_eq!(argmax(&[1, 9, 3, 9]), 1);
         assert_eq!(argmax(&[]), 0);
     }

@@ -1,7 +1,7 @@
 //! The window: pick a folder, get a report.
 //!
-//! Ported from `analyser/window.py`'s `MainWindow`. The layout is a port; the
-//! interaction rules are behaviour and survive the toolkit change unchanged.
+//! The interaction rules here are behaviour rather than layout, so they
+//! survive a change of toolkit unchanged.
 //!
 //! **A worker event repaints the window; the window never polls for one.**
 //! [`Shell::start_pump`] awaits the job's channel on GPUI's *foreground*
