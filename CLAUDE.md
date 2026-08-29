@@ -6,12 +6,10 @@ Point `tga` at a finished Telegram export folder and it writes one
 self-contained `report.html` beside it. `TelegramAnalyser.exe` is the same
 program with a window on it.
 
-**Read `REFACTOR.md` first.** The program began as a port of a Python analyser
-and was shaped throughout by a harness that diffed the two. That harness is
-being removed and the code reshaped around what it is now; `REFACTOR.md` is the
-plan, the agreed decisions, and where the work has got to. `PLAN.md` is the
-older record — accurate about *why* each figure is computed the way it is, out
-of date about the harness.
+**Read `PLAN.md` first.** It is the record of why each figure is computed the
+way it is, and of the decisions that would otherwise be re-litigated every time
+somebody reads the code. `REFACTOR.md` is the log of the rewrite that produced
+the current shape — worth reading once, for what it found.
 
 ## Commands
 
@@ -99,17 +97,13 @@ nothing in it.
   from the same numbers. The sort is explicit now; do not remove it on the
   grounds that BTreeMap already does it, and do not assume the current
   dependency set is the last one that will reach for that feature.
-- **The stylesheet and the script are inside Rust string literals, and their
-  `/* */` comments are emitted into the report.** Editing one changes the file's
-  bytes and fails `save.bat baseline`. They move out into real `.css` and `.js`
-  files in step 4.
+- **`assets/report.css` and `assets/report.js` are copied into the report
+  verbatim**, comments included. Editing either changes the file's bytes and
+  fails `save.bat baseline`, and `.gitattributes` pins their line endings for
+  the same reason it pins the golden's.
 - **`Count` serialises as `["label", 41]`, not as an object.** Nine branches use
   it. The `from`/`into` pair on the struct is what keeps the file's shape while
   the code reads `.label` and `.n`; changing it invalidates every recorded dump.
-- **The `\u{91}2` in the `details[open]` marker is an inherited defect**, still
-  present in `CSS` and overridden by a real minus in `CSS_SURFACE`. There is a
-  test pinning the order. The two stylesheets merge and the literal goes when the
-  stylesheet moves out into its own file.
 - **Nothing in a notes file is trusted.** Every string is escaped into the HTML
   and a malformed entry is dropped, never raised — which is why `tga_notes::load`
   returns no `Result`.
@@ -121,11 +115,11 @@ nothing in it.
 
 **`save.bat baseline` is the load-bearing check.** It runs the program over both
 real archives and compares the whole report and the whole stats dump, byte for
-byte, against a recording made before the refactor started. Steps 2 to 4 of
-`REFACTOR.md` are each supposed to change nothing, so a difference is a mistake
-rather than a judgement call. Three legs: `ua-kolab`, `krgm`, and `krgm-notes`,
-which passes the 42 hand-written notes so the whole annotation layer's markup is
-covered too.
+byte, against a recording. A difference is a mistake rather than a judgement
+call unless the change was meant to alter the output — and then it is
+`save.bat baseline record`, after reading the diff. Three legs: `ua-kolab`,
+`krgm`, and `krgm-notes`, which passes the 42 hand-written notes so the whole
+annotation layer's markup is covered too.
 
 Two real corpora, both on removable drives:
 
@@ -159,5 +153,10 @@ checkout would fail every byte-for-byte compare), `eol=crlf` on `*.bat` (cmd's
   report, no switch. `tga_report::palette::tests` re-derives all four ordinal
   ramp checks from the hex values, and `tga_app::theme::tests` asserts the
   window's copy has not drifted from the report's.
+- The window is `eframe`/`egui` on the **glow** backend, deliberately: it is a
+  text field, two tick boxes, a bar and three buttons, and wgpu drags in a
+  shader compiler for that. Everything the design needs and egui does not
+  default to — square corners, hairline strokes, no shadow, Geist — is set in
+  `tga_app::theme::install` rather than inherited.
 - Toolchain is pinned: Rust 1.97.0, MSVC target.
 - No `origin` remote; `save.bat push` says so and stops.
