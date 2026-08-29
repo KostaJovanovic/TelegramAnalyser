@@ -9,6 +9,13 @@
 # it the corpus tests skip, and that skip has to be loud.
 /reference/
 
+# Today's output, recorded before the refactor started and compared against
+# after every step of it. Same content as /reference/ and the same rule: these
+# are whole reports on two real archives, so they are somebody else's
+# conversation and they do not go into git. `save.bat baseline` records them;
+# `save.bat baseline check` compares.
+/baseline/
+
 # Reports written while testing. Each is a self-contained megabyte of somebody
 # else's archive.
 report*.html

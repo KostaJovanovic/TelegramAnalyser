@@ -69,6 +69,7 @@ if /i "%ACTION%"=="report"  goto report
 if /i "%ACTION%"=="stats"   goto stats
 if /i "%ACTION%"=="oracle"  goto oracle
 if /i "%ACTION%"=="parity"  goto parity
+if /i "%ACTION%"=="baseline" goto baseline
 if /i "%ACTION%"=="bless"   goto bless
 if /i "%ACTION%"=="clean"   goto clean
 
@@ -87,11 +88,12 @@ echo   8  report   write report.html for an export folder
 echo   9  stats    write the --stats dump for an export folder
 echo   10 oracle   re-record the Python side for both corpora
 echo   11 parity   diff both reports against the Python analyser's
-echo   12 bless    re-record the two committed goldens
-echo   13 clean    report the build cache, and empty it
-echo   14 quit
+echo   12 baseline diff both reports against what this program wrote before
+echo   13 bless    re-record the two committed goldens
+echo   14 clean    report the build cache, and empty it
+echo   15 quit
 echo.
-set /p CHOICE=select [1-14]:
+set /p CHOICE=select [1-15]:
 if "%CHOICE%"=="1" goto save
 if "%CHOICE%"=="2" (set "COMMIT_ONLY=1" & goto save)
 if "%CHOICE%"=="3" goto push
@@ -103,9 +105,10 @@ if "%CHOICE%"=="8" goto report
 if "%CHOICE%"=="9" goto stats
 if "%CHOICE%"=="10" goto oracle
 if "%CHOICE%"=="11" goto parity
-if "%CHOICE%"=="12" goto bless
-if "%CHOICE%"=="13" goto clean
-if "%CHOICE%"=="14" exit /b 0
+if "%CHOICE%"=="12" goto baseline
+if "%CHOICE%"=="13" goto bless
+if "%CHOICE%"=="14" goto clean
+if "%CHOICE%"=="15" exit /b 0
 echo [err]  invalid choice
 goto menu
 
@@ -500,6 +503,115 @@ if errorlevel 1 (
   set SAVE_ERROR=1
 )
 call :since TS "%~1"
+exit /b 0
+
+
+rem ---------------------------------------------------------------------------
+rem What this program wrote before, against what it writes now.
+rem
+rem **This is what replaces the Python oracle.** The parity legs above could only
+rem ever answer "does Rust still match Python", which stops being a useful
+rem question the moment the two are meant to differ -- and the refactor is
+rem exactly that moment. This asks the question that survives it: did anything I
+rem just changed alter one byte of the report? Steps 2 to 4 of REFACTOR.md are
+rem all supposed to answer no, so a difference is a mistake rather than a
+rem judgement call.
+rem
+rem Both files are compared byte for byte, the stats dump included. That is only
+rem possible because the dump's layout is held still on purpose -- see the
+rem serde note on `Count` in tga-stats.
+rem
+rem   save.bat baseline record   record today's output
+rem   save.bat baseline          compare against it
+:baseline
+echo.
+if /i "%~2"=="record" goto baserecord
+echo === baseline: the report against the last recording ===
+if not exist "baseline\ua-kolab.report.html" (
+  echo [skip] nothing recorded -- run: save.bat baseline record
+  goto end
+)
+call :checkcargo
+if errorlevel 1 goto end
+cargo build --release -p tga-cli
+if errorlevel 1 (set SAVE_ERROR=1 & goto end)
+call :onebase "ua-kolab" "%UAEXPORT%"
+call :onebase "krgm" "%KRGMEXPORT%"
+call :onebase "krgm-notes" "%KRGMEXPORT%" "%KRGMEXPORT%\_timeline\events\general.json"
+goto end
+
+:baserecord
+echo === baseline: record what the report looks like now ===
+call :checkcargo
+if errorlevel 1 goto end
+cargo build --release -p tga-cli
+if errorlevel 1 (set SAVE_ERROR=1 & goto end)
+if not exist "baseline" mkdir "baseline"
+rem Three legs, not two. Neither export has an events file beside it, so the
+rem first two leave the entire annotation layer -- the rail, the markers, the
+rem cards, the coverage band, the "matches nobody" list -- unrecorded, and that
+rem is a large part of the markup this refactor moves around. The third points
+rem at the 42 notes that were written by hand about the KRGM archive.
+call :onerecord "ua-kolab" "%UAEXPORT%"
+call :onerecord "krgm" "%KRGMEXPORT%"
+call :onerecord "krgm-notes" "%KRGMEXPORT%" "%KRGMEXPORT%\_timeline\events\general.json"
+echo.
+echo [note] baseline\ is gitignored. It is two whole reports on two real
+echo        archives, which is other people's conversation.
+goto end
+
+rem `--stamp` is not decoration. The stamp is the one value in the report that
+rem comes from the clock, so it is pinned here to a date that is obviously not a
+rem real one. Recording on Tuesday and comparing on Friday would otherwise
+rem differ in the Notes line and nowhere else, which is the kind of failure that
+rem teaches you to ignore the output. Both legs below pass the same literal.
+:onerecord
+if not exist "%~2" (
+  echo [skip] %~1: no export at %~2
+  exit /b 0
+)
+echo.
+echo [rec]  %~1
+set "NOTESARG="
+if not "%~3"=="" set NOTESARG=--notes "%~3"
+call :clock TS
+target\release\tga.exe "%~2" --quiet --stamp "1 January 2000" !NOTESARG! --out "baseline\%~1.report.html" --stats "baseline\%~1.stats.json"
+if errorlevel 1 (set SAVE_ERROR=1 & exit /b 1)
+call :since TS "%~1"
+exit /b 0
+
+:onebase
+if not exist "%~2" (
+  echo [skip] %~1: no export at %~2
+  exit /b 0
+)
+if not exist "baseline\%~1.report.html" (
+  echo [skip] %~1: never recorded
+  exit /b 0
+)
+echo.
+echo [leg]  %~1
+set "NOTESARG="
+if not "%~3"=="" set NOTESARG=--notes "%~3"
+call :clock TS
+target\release\tga.exe "%~2" --quiet --stamp "1 January 2000" !NOTESARG! --out "baseline\_now-%~1.report.html" --stats "baseline\_now-%~1.stats.json"
+if errorlevel 1 (set SAVE_ERROR=1 & exit /b 1)
+call :samebytes "baseline\%~1.report.html" "baseline\_now-%~1.report.html" "%~1 report"
+call :samebytes "baseline\%~1.stats.json"  "baseline\_now-%~1.stats.json"  "%~1 stats "
+call :since TS "%~1"
+exit /b 0
+
+rem fc /b rather than a hash, because when it does differ the first differing
+rem offset is the thing worth having and a hash cannot give it.
+:samebytes
+fc /b "%~1" "%~2" >nul 2>&1
+if errorlevel 1 (
+  echo [err]  %~3 differs from the baseline
+  echo        fc /b "%~1" "%~2"
+  set SAVE_ERROR=1
+  exit /b 1
+)
+echo [ok]   %~3 identical
 exit /b 0
 
 

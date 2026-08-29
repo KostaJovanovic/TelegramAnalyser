@@ -34,6 +34,11 @@ Options
                       annotate it.
     --notes PATH      read the events file from here rather than from beside
                       the export
+    --stamp TEXT      the date the notes section prints, instead of today's.
+                      The one value in the report that comes from the clock, so
+                      pinning it is what makes two runs on different days
+                      comparable byte for byte -- which is what `save.bat
+                      baseline` rests on.
     --classic         write the report the Python analyser writes, byte for
                       byte: no search, no event filters, no coverage band, and
                       the uncompressed presence rows. This is what the parity
@@ -65,6 +70,7 @@ fn main() -> Result<()> {
     let mut stats_out: Option<PathBuf> = None;
     let mut classic = false;
     let mut quiet = false;
+    let mut stamp: Option<String> = None;
 
     let mut rest = args[flags_from..].iter();
     while let Some(flag) = rest.next() {
@@ -87,11 +93,24 @@ fn main() -> Result<()> {
                 Some(path) => notes_path = Some(PathBuf::from(path)),
                 None => bail!("--notes needs a path"),
             },
+            "--stamp" => match rest.next() {
+                Some(text) => stamp = Some(text.clone()),
+                None => bail!("--stamp needs a date"),
+            },
             "--classic" => classic = true,
             "--quiet" => quiet = true,
             other => bail!("Unknown option: {other}\n\n{USAGE}"),
         }
     }
+
+    // Built once and shared by both render paths, so `--from-stats` and a
+    // straight read cannot drift apart in what they pass the writer.
+    let options = tga_report::Options {
+        embed_fonts,
+        classic,
+        stamp: stamp.unwrap_or_else(tga_report::today_stamp),
+        ..Default::default()
+    };
 
     // The notes come from wherever they were named, or from beside the export.
     // A `--notes` path that is not there is an error rather than a shrug: the
@@ -126,11 +145,7 @@ fn main() -> Result<()> {
             &stats,
             &tga_report::names_from_stats(&stats),
             &notes,
-            &tga_report::Options {
-                embed_fonts,
-                classic,
-                ..Default::default()
-            },
+            &options,
         );
         write_utf8(&out, &html)?;
         println!(
@@ -196,11 +211,7 @@ fn main() -> Result<()> {
         &stats,
         &tga_report::names_from_stats(&stats),
         &notes,
-        &tga_report::Options {
-            embed_fonts,
-            classic,
-            ..Default::default()
-        },
+        &options,
     );
     write_utf8(&out, &html)?;
 
