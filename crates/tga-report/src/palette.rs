@@ -1,10 +1,10 @@
 //! The report's colour.
 //!
-//! `tga-ui` holds the same tokens for the window, so the report and the app that
-//! produced it look like one product. The values are mirrored rather than
-//! imported, because this module's only job is to write a text file and it
-//! should not drag a GPU toolkit in to do it; `tga_ui::tokens::tests` asserts
-//! the two never drift.
+//! `tga-app`'s `theme` holds the same tokens for the window, so the report and
+//! the app that produced it look like one product. The values are mirrored
+//! rather than imported, because this module's only job is to write a text file
+//! and it should not drag a graphics toolkit in to do it;
+//! `tga_app::theme::tests` asserts the two never drift.
 //!
 //! **One appearance.** There was a light set here too, kept alive only because
 //! a frozen reproduction of an older report emitted it and a byte diff compared

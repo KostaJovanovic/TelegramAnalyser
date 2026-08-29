@@ -7,7 +7,6 @@ members = [
     "crates/tga-metrics",
     "crates/tga-report",
     "crates/tga-cli",
-    "crates/tga-ui",
     "crates/tga-app",
 ]
 
@@ -28,19 +27,6 @@ serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 anyhow = "1"
 
-# Pinned exactly, not by caret, and for the reason `telegram_rust` states: gpui
-# is pre-1.0, its README suggests `version = "*"`, and taking that advice means
-# a routine `cargo update` can break the interface with no code change of ours.
-# Bump it deliberately, on its own commit, with the parity legs green either
-# side.
-#
-# `gpui-component` is deliberately **not** here. The exporter needs it for
-# overlays and dropdowns; this window is a path field, a button, a theme
-# toggle, two tick boxes, a 3px bar and a status line, and the folder picker is
-# gpui's own `prompt_for_paths`. Skipping it drops roughly 14 MB of binary and
-# a second pre-1.0 pin.
-gpui = "=0.2.2"
-
 [profile.release]
 opt-level = 3
 lto = "thin"
@@ -55,9 +41,8 @@ strip = true
 # every dependency and no workspace member, which is the right line -- stepping
 # through our code and reading a backtrace are unchanged.
 #
-# This tree is far smaller than that one (no gpui, no Telegram client), so the
-# setting is cheap insurance rather than a rescue. It stops being cheap in
-# phase 4, when GPUI arrives.
+# This tree is far smaller than that one (no Telegram client), so the setting is
+# cheap insurance rather than a rescue.
 [profile.dev.package."*"]
 debug = false
 

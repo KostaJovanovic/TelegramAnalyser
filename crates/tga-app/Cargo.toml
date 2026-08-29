@@ -11,32 +11,25 @@ name = "TelegramAnalyser"
 path = "src/main.rs"
 
 [dependencies]
-tga-ui = { path = "../tga-ui" }
 tga-read = { path = "../tga-read" }
-tga-metrics = { path = "../tga-metrics" }
 tga-stats = { path = "../tga-stats" }
+tga-metrics = { path = "../tga-metrics" }
 tga-notes = { path = "../tga-notes" }
 tga-report = { path = "../tga-report" }
 
-gpui = { workspace = true }
-
-# Pinned exactly, like `gpui`, and for the same reason: it is pre-1.0, its
-# README suggests `version = "*"`, and a caret lets a routine `cargo update`
-# move it with no code change of ours.
+# **`glow`, not `wgpu`, and `default-features = false` to get it.** This window
+# is a text field, two tick boxes, a bar and three buttons; it does not need a
+# modern graphics API, and wgpu drags in a compiler for one. glow is OpenGL,
+# which every machine that can run Explorer already has.
 #
-# It is here for **one control**: the path field. Everything else the window
-# paints -- rules, tick boxes, the bar, the buttons -- is `tga-ui`, and the
-# folder picker is gpui's own `prompt_for_paths`. A single-line text field with
-# a caret, a selection and a clipboard is the one piece where hand-rolling
-# produces something visibly worse than the borrowed part, and pasting a path
-# copied out of Explorer is how this window is actually used.
-gpui-component = "=0.5.1"
+# `default_fonts` is off because the window ships Geist and nothing else -- the
+# report is set in it, and a window in a different typeface from the file it
+# writes is two products.
+eframe = { version = "0.33", default-features = false, features = ["glow"] }
 
-# The progress channel. `std::sync::mpsc`'s receiver can only be *polled*, and
-# polling it from `render` means nothing appears until some unrelated input
-# causes a frame -- which the user experiences as having to move the mouse to
-# make the app work. This one can be awaited on GPUI's foreground executor,
-# which is what lets the worker mark the window dirty. Same lesson, and the same
-# fix, as `tgx-app/src/bridge.rs`.
-futures = "0.3"
+# The native folder picker. Hand-rolling one means reimplementing the sidebar,
+# the recent list and the path box, and getting a worse version of a dialog
+# people already know.
+rfd = "0.16"
+
 anyhow = { workspace = true }

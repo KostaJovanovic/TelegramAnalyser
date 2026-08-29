@@ -62,8 +62,8 @@ tga-metrics   every figure, one pass. No I/O. Fills in a tga_stats::Stats.
 tga-report    the ramp, the SVG marks, the one HTML file. Reads a Stats.
               MUST NOT depend on tga-read or tga-metrics.
 tga-cli       the `tga` binary.
-tga-ui        tokens, fonts, components in GPUI.
-tga-app       the window, TelegramAnalyser.exe.
+tga-app       the window, TelegramAnalyser.exe. egui; state.rs holds every rule
+              it applies, with no toolkit in it, so they stay testable.
 ```
 
 `tga-report` renders from a `tga_stats::Stats`, which is exactly what `--stats`
@@ -94,10 +94,11 @@ nothing in it.
 - **The stats dump is sorted by `tga_stats::write`, not by the map type.**
   `serde_json`'s object is a `BTreeMap` and sorts itself — until something turns
   on its `preserve_order` feature, and cargo unifies features across everything
-  built in one invocation. `gpui` turns it on, so `cargo build -p tga-cli` and
-  `cargo build` produced differently ordered dumps from the same numbers. The
-  sort is explicit now; do not remove it on the grounds that BTreeMap already
-  does it.
+  built in one invocation. The window's old toolkit turned it on, so
+  `cargo build -p tga-cli` and `cargo build` produced differently ordered dumps
+  from the same numbers. The sort is explicit now; do not remove it on the
+  grounds that BTreeMap already does it, and do not assume the current
+  dependency set is the last one that will reach for that feature.
 - **The stylesheet and the script are inside Rust string literals, and their
   `/* */` comments are emitted into the report.** Editing one changes the file's
   bytes and fails `save.bat baseline`. They move out into real `.css` and `.js`
@@ -154,12 +155,9 @@ checkout would fail every byte-for-byte compare), `eol=crlf` on `*.bat` (cmd's
   code does. Preserve them through edits; a paraphrase loses the defensive
   detail that was added after something broke. New non-obvious decisions get the
   same treatment.
-- Dark only. One `Palette` in `tga-ui`, one `html.dark` block in the report, no
-  switch. `palette::tests` re-derives all four ordinal ramp checks from the hex
-  values, and `tga_ui::tokens::tests` asserts the window's copy has not drifted
-  from the report's.
-- Pre-1.0 dependencies (`gpui`, `gpui-component`) are pinned with `=`, and moved
-  deliberately on their own commit. Both are removed in step 5, which replaces
-  the window with egui.
+- Dark only. One palette in `tga-app/src/theme.rs`, one `html.dark` block in the
+  report, no switch. `tga_report::palette::tests` re-derives all four ordinal
+  ramp checks from the hex values, and `tga_app::theme::tests` asserts the
+  window's copy has not drifted from the report's.
 - Toolchain is pinned: Rust 1.97.0, MSVC target.
 - No `origin` remote; `save.bat push` says so and stops.

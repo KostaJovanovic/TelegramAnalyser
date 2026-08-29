@@ -6,15 +6,18 @@
 //! would stop repainting — and a window that stops repainting is one Windows
 //! offers to close for you.
 //!
-//! **Nothing here touches GPUI.** The worker owns no view and no context; it
-//! sends [`Progress`] and the shell decides what that means. That is what keeps
-//! the failure path honest: a bad folder or a malformed export becomes a
-//! [`Progress::Failed`] on screen rather than a panic that takes the thread
-//! with no message at all.
+//! **The worker owns no widget.** It sends [`Progress`] and the shell decides
+//! what that means, which is what keeps the failure path honest: a bad folder
+//! or a malformed export becomes a [`Progress::Failed`] on screen rather than a
+//! panic that takes the thread with no message at all.
+//!
+//! The one thing it does hold is a clone of the egui context, and only to call
+//! `request_repaint`. An `mpsc::Receiver` can only be *polled*, so without that
+//! call nothing appears until some unrelated input causes a frame -- which the
+//! user experiences as having to move the mouse to make the app work.
 
 use std::path::{Path, PathBuf};
-
-use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 /// The five stages a run passes through, as the bar counts them.
 pub const STAGES: usize = 4;
@@ -52,9 +55,10 @@ pub struct Request {
 /// What the notes section says wrote the file.
 pub const SOURCE: &str = "Telegram Export Analyser";
 
-/// Start a run. The receiver is awaited on GPUI's foreground executor.
-pub fn spawn(request: Request) -> UnboundedReceiver<Progress> {
-    let (tx, rx) = unbounded();
+/// Start a run. The receiver is drained by the window on the next frame.
+pub fn spawn(request: Request, ctx: eframe::egui::Context) -> Receiver<Progress> {
+    let (tx, rx) = channel();
+    let tx = Waking { tx, ctx };
     std::thread::Builder::new()
         .name("tga-analyse".into())
         .spawn(move || run(request, tx))
@@ -65,16 +69,34 @@ pub fn spawn(request: Request) -> UnboundedReceiver<Progress> {
     rx
 }
 
-fn run(request: Request, tx: UnboundedSender<Progress>) {
-    // Every send is `let _ =`: the window may have been closed, and a worker
-    // that panics on a closed channel loses the report it had already written.
+/// A sender that wakes the window after every message.
+///
+/// Wrapped rather than left to the caller because "send, then repaint" has to
+/// happen at all eleven send sites and forgetting it at one produces a window
+/// that is a frame behind for the rest of the run.
+struct Waking {
+    tx: Sender<Progress>,
+    ctx: eframe::egui::Context,
+}
+
+impl Waking {
+    /// Every send is ignored on failure: the window may have been closed, and a
+    /// worker that panics on a closed channel loses the report it had already
+    /// written.
+    fn send(&self, event: Progress) {
+        let _ = self.tx.send(event);
+        self.ctx.request_repaint();
+    }
+}
+
+fn run(request: Request, tx: Waking) {
     let say = |done: usize, label: String| {
-        let _ = tx.unbounded_send(Progress::Step { done, label });
+        tx.send(Progress::Step { done, label });
     };
 
     say(0, "Reading the export".into());
     let mut report = |_done: usize, _total: usize, name: &str| {
-        let _ = tx.unbounded_send(Progress::Step {
+        tx.send(Progress::Step {
             done: 0,
             label: format!("Reading {name}"),
         });
@@ -82,12 +104,12 @@ fn run(request: Request, tx: UnboundedSender<Progress>) {
     let export = match tga_read::load(&request.folder, Some(&mut report)) {
         Ok(export) => export,
         Err(e) => {
-            let _ = tx.unbounded_send(Progress::Failed(format!("{e}")));
+            tx.send(Progress::Failed(format!("{e}")));
             return;
         }
     };
     if export.msgs.is_empty() {
-        let _ = tx.unbounded_send(Progress::Failed(
+        tx.send(Progress::Failed(
             "That export has no messages in it.".into(),
         ));
         return;
@@ -124,12 +146,12 @@ fn run(request: Request, tx: UnboundedSender<Progress>) {
         },
     );
     if let Err(e) = write_report(&request.out, &html) {
-        let _ = tx.unbounded_send(Progress::Failed(format!("{}: {e}", request.out.display())));
+        tx.send(Progress::Failed(format!("{}: {e}", request.out.display())));
         return;
     }
 
     say(STAGES, "Done".into());
-    let _ = tx.unbounded_send(Progress::Done {
+    tx.send(Progress::Done {
         path: request.out,
         messages: export.msgs.len(),
         topics: export.topics.len(),
@@ -196,7 +218,8 @@ mod tests {
         let out = dir.join("report.html");
         let _ = std::fs::remove_file(&out);
 
-        let (tx, rx) = unbounded();
+        let (tx, rx) = channel();
+        let ctx = eframe::egui::Context::default();
         run(
             Request {
                 folder: dir.clone(),
@@ -204,10 +227,10 @@ mod tests {
                 write_digest: false,
                 embed_fonts: false,
             },
-            tx,
+            Waking { tx, ctx },
         );
 
-        let seen: Vec<Progress> = futures::executor::block_on(futures::StreamExt::collect(rx));
+        let seen: Vec<Progress> = rx.try_iter().collect();
         // `tga_read::load` refuses first and names what it looked for, which is
         // the more useful of the two messages — the shell prints it verbatim.
         assert!(

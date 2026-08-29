@@ -687,12 +687,13 @@ pub struct Deepest {
 /// **The sort is done here rather than left to the map type, and that is not
 /// belt and braces.** `serde_json`'s object is a `BTreeMap` by default, which
 /// sorts on its own — but its `preserve_order` feature swaps in an `IndexMap`,
-/// and cargo unifies features across everything built in one invocation. `gpui`
-/// turns that feature on somewhere in its tree, so `cargo build -p tga-cli`
-/// and `cargo build` (which also builds the window) produced *differently
-/// ordered dumps from the same numbers*, and only one of them matched the
-/// recorded baseline. Sorting explicitly makes the file the same file however
-/// the binary that wrote it was built.
+/// and cargo unifies features across everything built in one invocation. The
+/// window's toolkit turned that feature on somewhere in its tree, so
+/// `cargo build -p tga-cli` and `cargo build` (which also builds the window)
+/// produced *differently ordered dumps from the same numbers*, and only one of
+/// them matched the recorded baseline. Sorting explicitly makes the file the
+/// same file however the binary that wrote it was built, and keeps it that way
+/// the next time a dependency reaches for the same feature.
 ///
 /// The indent is one space rather than `to_string_pretty`'s two only because a
 /// 777 KB dump is 777 KB either way and the narrower one wraps less.

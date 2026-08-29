@@ -1,129 +1,256 @@
-//! Repaint the one borrowed control in the design's colours.
+//! The window's colour and type, taken from the report's own stylesheet.
 //!
-//! Ported from `telegram_rust/crates/tgx-app/src/theme.rs`, trimmed to the
-//! fields this window can actually reach — it borrows a single text field, not
-//! a whole widget set.
+//! The values are the ones `tga_report::palette` writes into every report, so
+//! the window and the file it produces are visibly one product. They are
+//! mirrored rather than imported as a colour type, because that module's only
+//! job is to write a text file and it should not know what a GPU is; [`tests`]
+//! below asserts the two never drift.
 //!
-//! `gpui_component` keeps its colours in `Theme`, a gpui `Global`. Left alone,
-//! that global is the library's own palette, and a field painted in it beside
-//! our hairline rules is the most visible way two design languages can
-//! disagree: rounded corners, a grey tray fill, and a blue focus ring.
+//! Swiss/International: hairline rules, **square corners**, one red, and no
+//! shadows. egui's defaults are none of those, so every one of them is set
+//! here rather than inherited.
 //!
-//! **The order is load-bearing in both directions.** Call this *after*
-//! `gpui_component::init(cx)`, which is what installs the global — before it,
-//! there is nothing to write to. And call it before the first frame, because a
-//! component that has already painted keeps what it was measured with.
-//!
-//! **Dark only**, so this runs once at startup and never again. It is still
-//! written as a function of a `Palette` rather than against constants: the
-//! mapping from *our* token to *their* field is the part worth reading, and
-//! inlining `#0a0a0a` twenty times would bury it.
+//! **Dark only.** One appearance, no switch: a second is a second design to
+//! keep in step, and this one has two colours and a red to keep in step already.
 
-use gpui::{black, App};
-use tga_ui::tokens::{metrics, type_scale, Palette};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle,
+};
 
-pub fn apply(palette: &Palette, cx: &mut App) {
-    let theme = gpui_component::theme::Theme::global_mut(cx);
+/// One appearance, in the order the stylesheet declares it.
+pub struct Palette;
 
-    // **The library branches on `mode`**, not on how light the colours it was
-    // given happen to be — icon polarity and a handful of `is_dark()` calls
-    // inside its own components. A dark palette under `ThemeMode::Light` gets
-    // those decisions backwards while every colour looks right, which is the
-    // hardest kind of mismatch to see. There is one appearance here, so this is
-    // a constant rather than a branch.
-    theme.mode = gpui_component::theme::ThemeMode::Dark;
+impl Palette {
+    /// The page itself, behind everything.
+    pub const BG: Color32 = hex(0x0a0a0a);
+    /// Body text.
+    pub const FG: Color32 = hex(0xe8e8e8);
+    /// Secondary text.
+    pub const MUTED: Color32 = hex(0x888888);
+    /// The 1px rule that does all the dividing. A **mid grey**, not ink — on a
+    /// near-black page a black hairline shows nothing at all.
+    pub const HAIRLINE: Color32 = hex(0x333333);
+    /// The softer divider.
+    pub const RULE: Color32 = hex(0x262626);
+    /// A raised fill.
+    pub const SURFACE: Color32 = hex(0x141414);
+    /// The one red.
+    pub const ACCENT: Color32 = hex(0xff3347);
+    /// Text on the accent.
+    pub const ACCENT_FG: Color32 = hex(0xffffff);
+}
 
-    // `metrics::RADIUS` is `px(0.0)` and says why: square corners are the
-    // design, not a default. The library ships 6px and 8px, and a rounded input
-    // is the single most visible way the two languages disagree.
-    theme.radius = metrics::RADIUS;
-    theme.radius_lg = metrics::RADIUS;
-    theme.font_size = type_scale::BODY;
+/// A `#rrggbb` literal, written the way the stylesheet writes it.
+///
+/// `const fn`, so the palette above is a compile-time constant and a
+/// transcription error is visible on the line it happens.
+const fn hex(rgb: u32) -> Color32 {
+    Color32::from_rgb(
+        ((rgb >> 16) & 0xff) as u8,
+        ((rgb >> 8) & 0xff) as u8,
+        (rgb & 0xff) as u8,
+    )
+}
 
-    // **This field is the whole window's typeface, not just the borrowed
-    // control's**: `Root::render` puts it on the div that wraps our view, so
-    // everything inherits from here. Set the family, not a `Font` — the library
-    // assigns this to `Styled::font_family`, which cannot carry OpenType
-    // features. `main.rs` adds those a level down.
-    theme.font_family = tga_ui::fonts::SANS.into();
+/// The type scale, in points.
+pub mod size {
+    pub const BODY: f32 = 14.0;
+    pub const SMALL: f32 = 13.0;
+    pub const MICRO: f32 = 11.0;
+}
 
-    // The page, and the ink on it. `background` is also the field's own fill,
-    // so it reads as part of the page rather than as a tray sunk into it.
-    theme.background = palette.bg;
-    theme.foreground = palette.fg;
+/// The floor the layout was measured at.
+pub const MIN_WINDOW: [f32; 2] = [620.0, 430.0];
+pub const WINDOW: [f32; 2] = [760.0, 430.0];
 
-    // **Borders: `hairline`, not `rule`.** These are not interchangeable —
-    // `hairline` is the mid grey `components::rule()` paints, the structural
-    // 1px line the whole layout is divided by; `rule` is the softer divider
-    // used *inside* a panel. Giving the field the soft grey would leave it
-    // looking faded next to our own lines.
-    theme.border = palette.hairline;
-    theme.input = palette.hairline;
-    theme.title_bar = palette.bg;
-    theme.title_bar_border = palette.hairline;
+/// The face names, which are ours rather than the files'.
+///
+/// egui takes a key we choose, unlike a platform text system that reads the
+/// `name` table out of the file — so there is nothing here to get wrong and no
+/// silent fallback to guard against.
+pub const SANS: &str = "geist";
+pub const MONO: &str = "geist-mono";
+const MEDIUM: &str = "geist-medium";
 
-    // **The one red says "here".** The focus ring and the caret are the same
-    // statement, so they are the same colour. Selection is that red held back
-    // to a wash: an opaque fill under text is a smear rather than a highlight.
-    theme.ring = palette.accent;
-    theme.caret = palette.accent;
-    theme.selection = palette.accent.alpha(0.25);
+/// Geist and Geist Mono, embedded in the binary.
+///
+/// **Latin and Cyrillic are merged into one file per weight.** Do not
+/// regenerate or subset them: the merge is why a Serbian or Ukrainian folder
+/// name renders in the design's typeface instead of dropping to a system
+/// fallback halfway through a word.
+fn fonts() -> FontDefinitions {
+    let mut fonts = FontDefinitions::empty();
+    for (name, bytes) in [
+        (SANS, &include_bytes!("../fonts/Geist-Regular.ttf")[..]),
+        (MEDIUM, &include_bytes!("../fonts/Geist-Medium.ttf")[..]),
+        (MONO, &include_bytes!("../fonts/GeistMono-Regular.ttf")[..]),
+    ] {
+        fonts
+            .font_data
+            .insert(name.to_owned(), FontData::from_static(bytes).into());
+    }
+    fonts
+        .families
+        .insert(FontFamily::Proportional, vec![SANS.to_owned()]);
+    fonts
+        .families
+        .insert(FontFamily::Monospace, vec![MONO.to_owned()]);
+    fonts
+        .families
+        .insert(FontFamily::Name(MEDIUM.into()), vec![MEDIUM.to_owned()]);
+    fonts
+}
 
-    // `muted` is a *background* in this library — the fill of a disabled input
-    // — so it takes `surface`, while `muted_foreground` takes our actual
-    // secondary text grey. Swapping the two paints placeholder text in a
-    // near-page grey and the disabled field in the text colour.
-    theme.muted = palette.surface;
-    theme.muted_foreground = palette.muted;
+/// The face the headings are set in.
+pub fn medium(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(MEDIUM.into()))
+}
 
-    theme.popover = palette.surface;
-    theme.popover_foreground = palette.fg;
+pub fn mono(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Monospace)
+}
 
-    // **`accent` here is not our accent.** The library uses this field for the
-    // hover *fill* on menu and list items. Handing it the red would spend the
-    // design's one emphasis colour on pointer movement.
-    theme.accent = palette.surface;
-    theme.accent_foreground = palette.fg;
+/// Everything about the window that is a decision rather than a default.
+pub fn install(ctx: &egui::Context) {
+    ctx.set_fonts(fonts());
 
-    theme.primary = palette.fg;
-    theme.primary_foreground = palette.bg;
-    theme.primary_hover = palette.fg.opacity(0.85);
-    theme.primary_active = palette.fg.opacity(0.72);
+    let mut style = (*ctx.style()).clone();
+    style.text_styles = [
+        (TextStyle::Body, FontId::proportional(size::BODY)),
+        (TextStyle::Button, FontId::proportional(size::BODY)),
+        (TextStyle::Small, FontId::proportional(size::MICRO)),
+        (TextStyle::Monospace, mono(size::SMALL)),
+        (TextStyle::Heading, medium(size::BODY)),
+    ]
+    .into();
 
-    theme.secondary = palette.surface;
-    theme.secondary_foreground = palette.fg;
-    theme.secondary_hover = palette.rule;
-    theme.secondary_active = palette.rule;
+    let v = &mut style.visuals;
+    v.dark_mode = true;
+    v.panel_fill = Palette::BG;
+    v.window_fill = Palette::BG;
+    v.extreme_bg_color = Palette::SURFACE;
+    v.override_text_color = Some(Palette::FG);
+    v.selection.bg_fill = Palette::ACCENT.gamma_multiply(0.35);
+    v.selection.stroke = Stroke::new(1.0_f32, Palette::FG);
+    v.hyperlink_color = Palette::ACCENT;
 
-    // **Our only red is the accent**, so danger is that red. Inventing a warmer
-    // one would put two reds in a design whose whole claim is that it has one.
-    theme.danger = palette.accent;
-    theme.danger_foreground = palette.accent_fg;
-    theme.danger_hover = palette.accent.opacity(0.85);
-    theme.danger_active = palette.accent.opacity(0.72);
+    // **Square, flat, hairline.** egui's default widget is a rounded raised
+    // button with a shadow; every line below takes one of those off.
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.corner_radius = CornerRadius::ZERO;
+        w.bg_fill = Palette::BG;
+        w.weak_bg_fill = Palette::BG;
+        w.bg_stroke = Stroke::new(1.0_f32, Palette::RULE);
+        w.fg_stroke = Stroke::new(1.0_f32, Palette::FG);
+        w.expansion = 0.0;
+    }
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, Palette::MUTED);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, Palette::HAIRLINE);
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, Palette::ACCENT);
+    v.widgets.active.bg_fill = Palette::SURFACE;
+    v.widgets.active.weak_bg_fill = Palette::SURFACE;
+    v.window_corner_radius = CornerRadius::ZERO;
+    v.menu_corner_radius = CornerRadius::ZERO;
+    v.window_shadow = egui::epaint::Shadow::NONE;
+    v.popup_shadow = egui::epaint::Shadow::NONE;
 
-    // The run is the one thing this window is *doing*, and that is what the
-    // accent is for.
-    theme.progress_bar = palette.accent;
-
-    // A scrim dims what is behind it, so it is ink rather than `fg` — the
-    // latter would paint a near-white veil over the page.
-    theme.overlay = black().alpha(0.6);
+    style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+    style.spacing.button_padding = egui::vec2(14.0, 7.0);
+    style.spacing.interact_size.y = 30.0;
+    ctx.set_style(style);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The report's own value for a token, as it writes it into the stylesheet.
+    fn from_report(name: &str) -> Color32 {
+        let text = tga_report::palette::token(name);
+        let rgb = u32::from_str_radix(text.trim_start_matches('#'), 16).expect("hex");
+        hex(rgb)
+    }
+
     #[test]
-    fn the_palette_this_is_handed_really_is_the_dark_one() {
-        // `apply` writes `ThemeMode::Dark` as a constant rather than deriving it
-        // from the colours, which is only correct while there is one appearance.
-        // This is the assertion that would fail if a light palette ever came
-        // back — the library uses `mode` for icon polarity, so a mismatch looks
-        // right and behaves wrong.
-        let p = Palette::dark();
-        assert!(p.bg.l < p.fg.l, "the page must be darker than the ink");
-        assert!(p.hairline.l > p.bg.l, "and the hairline visible against it");
+    fn the_window_and_the_report_name_the_same_colours() {
+        // The two copies exist because the report must not drag a graphics
+        // toolkit into a module whose only job is to write a text file. This is
+        // what stops them becoming two designs.
+        for (name, ours) in [
+            ("bg", Palette::BG),
+            ("fg", Palette::FG),
+            ("muted", Palette::MUTED),
+            ("hairline", Palette::HAIRLINE),
+            ("rule", Palette::RULE),
+            ("surface", Palette::SURFACE),
+            ("accent", Palette::ACCENT),
+            ("accent_fg", Palette::ACCENT_FG),
+        ] {
+            assert_eq!(
+                ours,
+                from_report(name),
+                "{name} has drifted from the report's stylesheet"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dark_hairline_is_neither_the_page_nor_the_text() {
+        // A dark theme with black hairlines shows nothing at all, and one with
+        // white hairlines is a wireframe.
+        let lum = |c: Color32| c.r() as u32 + c.g() as u32 + c.b() as u32;
+        assert!(lum(Palette::HAIRLINE) > lum(Palette::BG));
+        assert!(lum(Palette::HAIRLINE) < lum(Palette::FG));
+        assert!(lum(Palette::RULE) < lum(Palette::HAIRLINE));
+    }
+
+    #[test]
+    fn the_accent_really_is_red() {
+        let a = Palette::ACCENT;
+        assert!(a.r() > a.g() && a.r() > a.b(), "{a:?}");
+    }
+
+    #[test]
+    fn every_embedded_file_is_a_real_truetype_font() {
+        // A zero-length or truncated file registers without complaint and then
+        // renders nothing, which looks like a layout bug rather than a missing
+        // asset.
+        for bytes in [
+            &include_bytes!("../fonts/Geist-Regular.ttf")[..],
+            &include_bytes!("../fonts/Geist-Medium.ttf")[..],
+            &include_bytes!("../fonts/GeistMono-Regular.ttf")[..],
+        ] {
+            assert!(bytes.len() > 20_000, "suspiciously small face");
+            // TrueType's magic: 0x00010000, or `true`, or `OTTO`.
+            let magic = &bytes[..4];
+            assert!(
+                magic == [0x00, 0x01, 0x00, 0x00] || magic == b"true" || magic == b"OTTO",
+                "not a font: {magic:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_families_the_window_asks_for_are_the_ones_it_registered() {
+        // egui falls back silently to an empty glyph set for a family it does
+        // not have, which draws as a window with no text in it at all.
+        let fonts = fonts();
+        for family in [
+            FontFamily::Proportional,
+            FontFamily::Monospace,
+            FontFamily::Name(MEDIUM.into()),
+        ] {
+            let names = fonts.families.get(&family).expect("family is registered");
+            assert!(!names.is_empty(), "{family:?} has no face behind it");
+            for name in names {
+                assert!(fonts.font_data.contains_key(name), "{name} has no bytes");
+            }
+        }
     }
 }

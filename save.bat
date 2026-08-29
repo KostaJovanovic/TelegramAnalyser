@@ -316,10 +316,10 @@ call :ship "%CLINAME%"
 if errorlevel 1 goto end
 
 echo.
-rem 15 MB of the window is gpui plus gpui-component; the CLI is the same
-rem analyser with the toolkit taken off, which is what the difference between
-rem these two numbers measures.
-call :exesize "%EXENAME%" "  (the window: gpui + gpui-component)"
+rem The difference between these two numbers is the price of the window. It was
+rem 13.6 MB when the toolkit was gpui plus gpui-component, borrowed for one text
+rem field; on egui it is about 2 MB.
+call :exesize "%EXENAME%" "  (the window)"
 call :exesize "%CLINAME%" "  (the same analyser, no toolkit)"
 
 rem The cache, reported where somebody will actually read it. cargo never
