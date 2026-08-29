@@ -174,7 +174,7 @@ fn is_empty_activity(activity: &Value) -> bool {
 // masthead
 // ---------------------------------------------------------------------------
 
-pub fn masthead(stats: &Value, classic: bool) -> String {
+pub fn masthead(stats: &Value) -> String {
     let act = &stats["activity"];
     let info = &stats["export"];
     let span = if is_empty_activity(act) {
@@ -196,11 +196,11 @@ pub fn masthead(stats: &Value, classic: bool) -> String {
         ("records", "Records"),
         ("notes", "Notes"),
     ];
-    // The one entry the Python's nav does not have, and it is inserted rather
-    // than appended so the nav reads in page order. A link to a section the
-    // classic render does not contain would be a nav entry that scrolls
-    // nowhere, which is why this is gated with the section itself.
-    if !classic && stats.get("dynamics").is_some() {
+    // Inserted rather than appended, so the nav reads in page order. Gated on
+    // the branch for the same reason the section is: a `--from-stats` dump
+    // recorded before `dynamics` existed would otherwise get a nav entry that
+    // scrolls nowhere.
+    if stats.get("dynamics").is_some() {
         links.insert(4, ("between", "Between people"));
     }
     let toc: String = links
@@ -214,30 +214,17 @@ pub fn masthead(stats: &Value, classic: bool) -> String {
     // typed in, so with scripting off the box does nothing and the page is
     // whole. `type="search"` rather than `text`, so the platform gives it a
     // clear control and the Escape key.
-    let find = if classic {
-        String::new()
-    } else {
-        "<input class=\"find\" id=\"find\" type=\"search\" autocomplete=\"off\" \
-         placeholder=\"Search people, topics, events\" \
-         aria-label=\"Search people, topics, events\">\
-         <span class=\"found\" id=\"found\" role=\"status\"></span>"
-            .to_string()
-    };
-    // **The report is dark only, so there is no theme switch.** It survives in
-    // the classic render because that is a byte-for-byte reproduction of
-    // `report.py`, which had one — not because anything here offers a choice.
-    let theme_switch = if classic {
-        "<button class=\"switch\" id=\"theme\">Light</button>"
-    } else {
-        ""
-    };
+    let find = "<input class=\"find\" id=\"find\" type=\"search\" autocomplete=\"off\" \
+                placeholder=\"Search people, topics, events\" \
+                aria-label=\"Search people, topics, events\">\
+                <span class=\"found\" id=\"found\" role=\"status\"></span>";
     format!(
         "<header class=\"masthead\">\
          <p class=\"eyebrow\">Telegram archive</p>\
          <h1>{}</h1>\
          <p class=\"lede\">{} messages across {topics} topic{}, {span}.</p>\
          <nav class=\"toc\">{toc}</nav>\
-         <div class=\"switches\">{theme_switch}\
+         <div class=\"switches\">\
          <button class=\"switch\" id=\"aliases\" aria-pressed=\"false\">Former names</button>\
          <button class=\"switch\" id=\"everyone\" aria-pressed=\"false\">Everyone</button>\
          {find}</div></header>",
@@ -251,7 +238,7 @@ pub fn masthead(stats: &Value, classic: bool) -> String {
 // timeline
 // ---------------------------------------------------------------------------
 
-pub fn timeline(stats: &Value, notes: &Notes, names: &Names, classic: bool) -> String {
+pub fn timeline(stats: &Value, notes: &Notes, names: &Names) -> String {
     let events = &notes.events[..];
     let events_note = notes.source.as_str();
     let act = &stats["activity"];
@@ -262,8 +249,7 @@ pub fn timeline(stats: &Value, notes: &Notes, names: &Names, classic: bool) -> S
     let (buckets, per) = charts::bucket_days(&series, WIDTH);
     let top = buckets.iter().map(|(_, _, c)| *c).max().unwrap_or(1);
 
-    // Empty in classic, so `rail` renders the Python's plain circles.
-    let kinds: Vec<String> = if classic { Vec::new() } else { notes.kinds() };
+    let kinds: Vec<String> = notes.kinds();
     let rail = charts::rail(events, &series, WIDTH, 34.0, &kinds);
     let ribbon = charts::ribbon(&series, WIDTH, 132.0, Some(top), true, "hero");
     let axis = charts::time_axis(&series, WIDTH, 16.0);
@@ -348,21 +334,8 @@ pub fn timeline(stats: &Value, notes: &Notes, names: &Names, classic: bool) -> S
                     escaped
                 }
             };
-            if classic {
-                let _ = write!(
-                    cards,
-                    "<li id=\"event-{}\"><time>{when}</time><div><h4>{}</h4>\
-                     <p>{kind}{summary}{conf}</p>{cites}</div></li>",
-                    esc(&event.id),
-                    esc(&event.title)
-                );
-                continue;
-            }
-
-            // Everything below is a field the `_timeline` layout carries and
-            // the Python layout has no place for, so none of it can appear in
-            // a classic render and none of it appears at all unless the file
-            // actually said it.
+            // Everything below is a field only the `_timeline` notes layout
+            // carries, so none of it appears unless the file actually said it.
             let shape = kinds.iter().position(|k| *k == event.kind).unwrap_or(0);
             if !event.time.is_empty() {
                 let _ = write!(when, " <span class=\"at\">{}</span>", esc(&event.time));
@@ -416,11 +389,7 @@ pub fn timeline(stats: &Value, notes: &Notes, names: &Names, classic: bool) -> S
         .map(|(month, count)| vec![esc(&month), thousands(count)])
         .collect();
 
-    let coverage = if classic {
-        String::new()
-    } else {
-        coverage_panel(notes.coverage.as_ref(), &series, act)
-    };
+    let coverage = coverage_panel(notes.coverage.as_ref(), &series, act);
 
     format!(
         "{}{rail}{coverage}{ribbon}{axis}{caption}{stat_line}{note}{listing}{}</section>",
@@ -677,27 +646,23 @@ fn argmax(values: &[i64]) -> usize {
     values.iter().position(|v| *v == top).unwrap_or(0)
 }
 
-/// One presence row: the Python's rects in classic, paths otherwise.
+/// One presence row.
 ///
-/// Both draw the same picture on the same scale. See
-/// [`charts::strip_compact`] for what the compact form gives up and why it is
-/// the whole size budget — these rows are 64% of a large report.
+/// See [`charts::strip_compact`] for what the compact form gives up and why it
+/// is the whole size budget — these rows are 64% of a large report drawn the
+/// obvious way.
 pub const PRESENCE_WIDTH: f64 = WIDTH * 0.34;
 const PRESENCE_HEIGHT: f64 = 15.0;
 
-fn presence(dense: &[Day], scale: &Quantiles, classic: bool) -> String {
-    if classic {
-        charts::strip(dense, PRESENCE_WIDTH, PRESENCE_HEIGHT, scale, "")
-    } else {
-        charts::strip_compact(dense, PRESENCE_WIDTH, PRESENCE_HEIGHT, scale, "")
-    }
+fn presence(dense: &[Day], scale: &Quantiles) -> String {
+    charts::strip_compact(dense, PRESENCE_WIDTH, PRESENCE_HEIGHT, scale, "")
 }
 
 // ---------------------------------------------------------------------------
 // people
 // ---------------------------------------------------------------------------
 
-pub fn people(stats: &Value, classic: bool) -> String {
+pub fn people(stats: &Value) -> String {
     let folk = &stats["people"];
     let act = &stats["activity"];
     let rows: Vec<&Value> = arr(folk, "rows")
@@ -720,7 +685,7 @@ pub fn people(stats: &Value, classic: bool) -> String {
             per_person.and_then(|branch| branch.get(s(row, "key"))),
             &series,
         );
-        let mini = presence(&dense, &scale, classic);
+        let mini = presence(&dense, &scale);
         let aliases: Vec<&str> = arr(row, "aliases")
             .iter()
             .filter_map(Value::as_str)
@@ -1059,13 +1024,7 @@ fn label_for(names: &Names, key: &str) -> String {
 // between people
 // ---------------------------------------------------------------------------
 
-/// The `dynamics` branch, which no classic render may ever contain.
-///
-/// **This section is the reason the `classic` flag exists.** Every figure below
-/// comes from a branch the Python analyser never computed, so nothing here can
-/// be diffed against it — which is exactly the case PLAN.md said would end the
-/// oracle. It does not, because this is never called with `classic` set and
-/// `golden-classic.html` fails if any of this markup reaches that document.
+/// The `dynamics` branch: pairs, answer latency, tenure, retention and depth.
 ///
 /// It renders nothing at all when the branch is absent, which is the ordinary
 /// case for a `--from-stats` dump recorded before the branch existed.
@@ -1673,7 +1632,7 @@ pub fn churn(stats: &Value) -> String {
 // topics
 // ---------------------------------------------------------------------------
 
-pub fn topics(stats: &Value, classic: bool) -> String {
+pub fn topics(stats: &Value) -> String {
     let rows = arr(stats, "topics");
     let act = &stats["activity"];
     if rows.is_empty() {
@@ -1690,7 +1649,7 @@ pub fn topics(stats: &Value, classic: bool) -> String {
             String::new()
         } else {
             let dense = densify(by_topic.and_then(|branch| branch.get(&key)), &series);
-            presence(&dense, &scale, classic)
+            presence(&dense, &scale)
         };
         let _ = write!(
             body,

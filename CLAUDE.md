@@ -2,13 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-A Rust rewrite of a Python Telegram-export analyser: point `tga` at a finished
-export folder and it writes one self-contained `report.html` beside it.
-`TelegramAnalyser.exe` is the same program with a GPUI window on it.
+Point `tga` at a finished Telegram export folder and it writes one
+self-contained `report.html` beside it. `TelegramAnalyser.exe` is the same
+program with a window on it.
 
-**Read `PLAN.md` first.** It is the record of every decision, why it was taken,
-and how each phase actually went. All five phases are done; the open items are
-listed at its end.
+**Read `REFACTOR.md` first.** The program began as a port of a Python analyser
+and was shaped throughout by a harness that diffed the two. That harness is
+being removed and the code reshaped around what it is now; `REFACTOR.md` is the
+plan, the agreed decisions, and where the work has got to. `PLAN.md` is the
+older record — accurate about *why* each figure is computed the way it is, out
+of date about the harness.
 
 ## Commands
 
@@ -20,33 +23,31 @@ save.bat save               # test + commit + push
 save.bat build              # release, both exes into dist\
 save.bat run                # the window
 save.bat report <folder>    # write report.html beside an export
-save.bat oracle             # re-record the Python side for both corpora
-save.bat parity             # diff both classic reports against the Python's
-save.bat bless              # re-record the two committed goldens
+save.bat baseline           # both archives against the last recording
+save.bat baseline record    # re-record it
+save.bat bless              # re-record the committed golden
 save.bat clean              # report target\ size, then empty it
 ```
 
 Underneath it is plain cargo. Single legs:
 
 ```powershell
-cargo test -p tga-report  --test golden    # goldens; no corpus, no Python needed
-cargo test -p tga-report  --test parity    # the HTML oracle
-cargo test -p tga-metrics --test oracle    # the numbers oracle
-cargo test -p tga-read    --test corpus    # the reader against a real export
+cargo test -p tga-report --test golden     # the golden; no corpus needed
+cargo test -p tga-read   --test corpus     # the reader against a real export
 cargo test --all -- --nocapture            # --nocapture matters; see below
 
 cargo run -p tga-cli --bin tga -- <folder> [--out P] [--digest] [--no-fonts]
-                                           [--stats P] [--notes P] [--classic]
+                                           [--stats P] [--notes P] [--stamp T]
 cargo run -p tga-cli --bin tga -- --from-stats <stats.json> --out <report.html>
 ```
 
-- **`TGA_REQUIRE_CORPUS=1`** (which `save.bat` sets) turns a missing corpus or
-  recorded oracle into a failure instead of a skip. A plain `cargo test --all`
-  still skips, which is what keeps a fresh clone working. The skips are
-  `eprintln`s, so always pass `-- --nocapture` — libtest discards them otherwise
-  and a suite that compared nothing reports as coverage.
-- **`TGA_BLESS=1 cargo test -p tga-report --test golden`** re-records the two
-  goldens. Read the diff before committing it.
+- **`TGA_REQUIRE_CORPUS=1`** (which `save.bat` sets) turns a missing corpus into
+  a failure instead of a skip. A plain `cargo test --all` still skips, which is
+  what keeps a fresh clone working. The skips are `eprintln`s, so always pass
+  `-- --nocapture` — libtest discards them otherwise and a suite that compared
+  nothing reports as coverage.
+- **`TGA_BLESS=1 cargo test -p tga-report --test golden`** re-records the
+  golden. Read the diff before committing it.
 - `TGA_EXPORT` overrides the reader test's corpus path.
 
 ## Layering, and the two rules that pay for themselves
@@ -66,11 +67,17 @@ tga-app       the window, TelegramAnalyser.exe.
 
 `tga-report` renders from a `serde_json::Value` of exactly the shape
 `tga_metrics::analyse` returns and `--stats` dumps. That is what lets a recorded
-fixture replay through the writer with no export on disk — the golden test, the
-parity test and `--from-stats` all rest on it. `tga-notes` inherits the rule at
-one remove because it carries the `Event` type `tga-report` renders; the
+fixture replay through the writer with no export on disk — the golden test and
+`--from-stats` both rest on it. `tga-notes` inherits the rule at one remove
+because it carries the `Event` type `tga-report` renders; the
 `Export -> digest::Row` mapping therefore lives in the *callers*
 (`tga-cli/src/main.rs`, `tga-app`).
+
+**That `Value` is on its way out.** Step 3 of `REFACTOR.md` moves the shape into
+named types in a new `tga-stats` crate that both sides depend on, which keeps
+the layering rule and gets the compiler to check the field names. Until then,
+every read of the stats goes through `tga-report/src/stats.rs`, whose accessors
+all answer a missing branch with a zero rather than a panic.
 
 ## Invariants that change numbers or break the harness
 
@@ -83,21 +90,16 @@ one remove because it carries the `Event` type `tga-report` renders; the
   a reply to the message that opened it. Read literally, response-time medians
   stretch to days.
 - **`serde_json` without `preserve_order`.** Its default BTreeMap serialises
-  sorted, matching Python's `sort_keys=True`; turning it on fills the stats diff
-  with reordering noise.
-- **`Options::classic` is what keeps the oracle alive.** `classic: true` renders
-  the document `report.py` renders, byte for byte, and the parity legs compare
-  it. Every post-port addition sits behind `if !classic`; `golden-classic.html`
-  fails if one leaks. Do not "tidy" the classic path — including the deliberate
-  `\u{91}2` defect in the `details[open]` marker, which is reproduced so the
-  parity diff stays a clean zero and has a test guarding it.
-- **A figure the Python analyser never computed goes in a declared branch.**
-  `tga_metrics::ADDED` (mirrored in `tools/diff_stats.py`) names the branches
-  that are Rust-only; `dynamics` is the one so far. A branch on that list may be
-  absent from the Python dump and **must** be — if a name appears on both sides
-  the carve-out is hiding a real difference and `oracle.rs` fails. Adding a new
-  *key inside an existing branch* is not covered by this and will fail the diff
-  as `only in rust`; that needs a re-record of the Python side instead.
+  sorted, which is what makes the stats dump comparable against an earlier copy
+  of itself; turning it on fills that diff with reordering noise.
+- **The stylesheet and the script are inside Rust string literals, and their
+  `/* */` comments are emitted into the report.** Editing one changes the file's
+  bytes and fails `save.bat baseline`. They move out into real `.css` and `.js`
+  files in step 4.
+- **The `\u{91}2` in the `details[open]` marker is an inherited defect**, still
+  present in `CSS` and overridden by a real minus in `CSS_SURFACE`. There is a
+  test pinning the order. The two stylesheets merge and the literal goes when the
+  stylesheet moves out into its own file.
 - **Nothing in a notes file is trusted.** Every string is escaped into the HTML
   and a malformed entry is dropped, never raised — which is why `tga_notes::load`
   returns no `Result`.
@@ -107,26 +109,31 @@ one remove because it carries the `Event` type `tga-report` renders; the
 
 ## Verification
 
-Two real corpora on removable drives (`N:\telegram export\UA KOLAB TELEGRAM`,
-`J:\temp pureraw\KRGM*`) plus the Python original at
-`C:\Users\Kosta\Projekti\telegram` (its `.venv`, not system python) are the
-oracle for both the numbers and the HTML. `tools/dump_python_*.py` record it
-into `reference/`; `tools/diff_*.py` compare from outside and the `oracle`/
-`parity` tests do the same inside `cargo test`.
+**`save.bat baseline` is the load-bearing check.** It runs the program over both
+real archives and compares the whole report and the whole stats dump, byte for
+byte, against a recording made before the refactor started. Steps 2 to 4 of
+`REFACTOR.md` are each supposed to change nothing, so a difference is a mistake
+rather than a judgement call. Three legs: `ua-kolab`, `krgm`, and `krgm-notes`,
+which passes the 42 hand-written notes so the whole annotation layer's markup is
+covered too.
 
-Divergences are **declared, never discovered**: `EXCLUDED` in
-`tga-metrics/tests/oracle.rs` (per field), `tga_metrics::ADDED` (per branch, for
-figures with no Python counterpart) and `MASKED` in
-`tga-report/tests/parity.rs`. Each entry carries the reason it was ruled out,
-and all three lists are printed on every run. `EXCLUDED` and `ADDED` are
-mirrored in `tools/diff_stats.py`; adding to one and not the other makes the two
-harnesses disagree about what is being checked.
+Two real corpora, both on removable drives:
 
-`reference/`, `report*.html` and `*.stats.json` are gitignored — they are
-verbatim chat history from real people. The committed fixtures
-(`tga-report/tests/fixture.stats.json`, `tests/synthetic/`) are hand-written and
-name nobody, which is why they can be committed and never skip. They catch
-drift; they do not claim correctness — the parity leg is what does that.
+| corpus | messages | topics |
+|---|---:|---|
+| `N:\telegram export\UA KOLAB TELEGRAM` | 6,643 | 4 |
+| `J:\temp pureraw\KRGM*` | 333,582 | 10 |
+
+Re-record with `save.bat baseline record` **only** for a change that is meant to
+alter the output, and read the diff first.
+
+`baseline/`, `reference/`, `report*.html` and `*.stats.json` are gitignored —
+they are verbatim chat history from real people. (`reference/` holds output from
+the deleted Python harness; nothing reads it any more and it can be removed.)
+The committed fixtures (`tga-report/tests/fixture.stats.json`,
+`tests/synthetic/`) are hand-written and name nobody, which is why they can be
+committed and never skip. They catch drift on a fresh clone with no drives; they
+do not claim correctness.
 
 `.gitattributes` forces `-text` on every golden and recorded file (a CRLF
 checkout would fail every byte-for-byte compare), `eol=crlf` on `*.bat` (cmd's
@@ -138,13 +145,12 @@ checkout would fail every byte-for-byte compare), `eol=crlf` on `*.bat` (cmd's
   code does. Preserve them through edits; a paraphrase loses the defensive
   detail that was added after something broke. New non-obvious decisions get the
   same treatment.
-- The Python original is the reference for behaviour — read its implementation,
-  not its docstrings.
-- Dark only. One `Palette` in `tga-ui`, one `html.dark` block in the surface
-  report, no switch. The light set in `tga_report::palette` is not a leftover:
-  the classic render emits it, and `palette::tests` re-derives all four ordinal
-  ramp checks from the hex values in both modes.
+- Dark only. One `Palette` in `tga-ui`, one `html.dark` block in the report, no
+  switch. `palette::tests` re-derives all four ordinal ramp checks from the hex
+  values, and `tga_ui::tokens::tests` asserts the window's copy has not drifted
+  from the report's.
 - Pre-1.0 dependencies (`gpui`, `gpui-component`) are pinned with `=`, and moved
-  deliberately on their own commit with the parity legs green either side.
+  deliberately on their own commit. Both are removed in step 5, which replaces
+  the window with egui.
 - Toolchain is pinned: Rust 1.97.0, MSVC target.
 - No `origin` remote; `save.bat push` says so and stops.

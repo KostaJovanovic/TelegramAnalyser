@@ -1,18 +1,10 @@
 //! Every figure the report can show, computed in one pass over the export.
 //!
-//! Ported from `analyser/metrics/`.
-//!
-//! [`analyse`] returns a `serde_json::Value` rather than a typed struct, and
-//! that is deliberate rather than lazy. The Python original returns a plain
-//! nested dict for two stated reasons — the report renders a table twin of
-//! every chart and dicts make that mechanical, and the same structure dumps
-//! to `stats.json` with no adapter. A third reason applies only to the port:
-//! **that dump is the oracle.** Emitting the same shape keeps the diff against
-//! Python's output a line-for-line comparison rather than an argument about
-//! two schemas, which is what phase 1 is for.
-//!
-//! Once the numbers are proven, the report can be given typed input built from
-//! these same functions. Not before.
+//! [`analyse`] still returns a `serde_json::Value` rather than a typed struct.
+//! That was the right shape while the dump had to line up field for field
+//! against another program's, and it is the wrong one now: nothing checks a key
+//! spelt wrong, so a renamed field reads as zero rather than failing to
+//! compile. Step 3 of REFACTOR.md replaces it with named types in `tga-stats`.
 
 pub mod activity;
 pub mod content;
@@ -29,34 +21,12 @@ use tga_read::Export;
 
 pub use identity::{People, Person};
 
-/// Which branches of the Python dump this port currently produces.
+/// Every branch [`analyse`] emits, in the order it builds them.
 ///
-/// Named here rather than inferred by the diff, so a branch cannot be
-/// "passing" because nobody compared it. `tests/oracle.rs` fails if a branch
-/// listed here is missing from either side, and reports the rest as outstanding
-/// rather than silently ignoring them.
-pub const IMPLEMENTED: &[&str] = ALL_BRANCHES;
-
-/// Branches this analyser computes that the Python original never did.
-///
-/// **This is the list PLAN.md said would end the oracle, made survivable.** The
-/// stats diff only means anything where the two implementations are supposed to
-/// agree; the moment one computes something the other never did, a difference
-/// stops being evidence of a bug. Naming those branches here keeps the
-/// distinction a declaration rather than a judgement call — `tests/oracle.rs`
-/// allows a branch listed here to be Rust-only, and **requires** it to be
-/// absent from the Python dump, so a name that ever appears on both sides fails
-/// the suite instead of quietly stopping being compared. Everything not listed
-/// is still diffed character for character.
-///
-/// The same list lives in `tools/diff_stats.py`, which does the comparison from
-/// outside. Adding to one without the other is how the two harnesses come to
-/// disagree about what is being checked.
-pub const ADDED: &[&str] = &["dynamics"];
-
-/// Every branch the Python analyser emits, in the order `metrics/__init__.py`
-/// builds them. The difference against [`IMPLEMENTED`] is the work left.
-pub const ALL_BRANCHES: &[&str] = &[
+/// Named here rather than left implicit in the function body, so that "which
+/// figures does this program compute" has an answer that can be read in one
+/// place and asserted against.
+pub const BRANCHES: &[&str] = &[
     "export",
     "activity",
     "people",
@@ -69,6 +39,7 @@ pub const ALL_BRANCHES: &[&str] = &[
     "streak",
     "churn",
     "renamed",
+    "dynamics",
 ];
 
 pub fn analyse(export: &Export) -> (Value, People) {
@@ -122,9 +93,6 @@ pub fn analyse(export: &Export) -> (Value, People) {
     out.insert("churn".into(), extras::churn(export, &who, &acts));
     out.insert("conversation".into(), talk);
     out.insert("graph".into(), net);
-    // The one branch with no counterpart in the Python analyser. See `ADDED`:
-    // it is declared rather than discovered, so the oracle goes on comparing
-    // everything above it instead of failing on a name it has never seen.
     out.insert("dynamics".into(), dynamics::compute(export, &who));
 
     let mut renamed: Vec<&Person> = who.renamed().collect();

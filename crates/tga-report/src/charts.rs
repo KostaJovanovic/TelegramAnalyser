@@ -413,40 +413,15 @@ pub fn ribbon(
 ///
 /// Bucketed with [`bucket_days`] exactly as the hero ribbon is, so a column here
 /// sits under the same days as the column above it.
-pub fn strip(series: &[Day], width: f64, height: f64, scale: &Quantiles, cls: &str) -> String {
-    let (buckets, _) = bucket_days(series, width);
-    if buckets.is_empty() {
-        return frame(width, height, "", "", "");
-    }
-    let slot = width / buckets.len() as f64;
-    let mut parts = String::new();
-    for (index, (first, last, count)) in buckets.iter().enumerate() {
-        if *count <= 0 {
-            continue;
-        }
-        let _ = write!(
-            parts,
-            "<rect class=\"cell\" x=\"{}\" y=\"0\" width=\"{}\" height=\"{}\" \
-             fill=\"{}\" data-tip=\"{} &#183; {}\"/>",
-            num(index as f64 * slot),
-            num((slot - 0.5).max(1.0)),
-            num(height),
-            scale.var(*count),
-            esc(&bucket_label(first, last)),
-            thousands(*count)
-        );
-    }
-    let cls = format!("strip {cls}");
-    frame(width, height, &parts, cls.trim(), "Activity over time")
-}
-
-/// The same row, drawn as one path per shade instead of one rect per cell.
 ///
-/// **This is the whole size budget.** On the KRGM archive [`strip`] emits 260
-/// rows — 250 people and 10 topics — and they come to 969 KB of a 1,519 KB
-/// report: 64% of the file is presence rows, against 275 KB for the embedded
-/// type and 275 KB for everything else on the page. Nothing else in the
-/// document is worth optimising until this is.
+/// It is drawn as one path per shade rather than one rect per cell.
+///
+/// **This is the whole size budget.** Drawn the obvious way — a `<rect>` per
+/// cell, each carrying its own `fill` and its own `data-tip` — the KRGM
+/// archive's 260 rows (250 people and 10 topics) came to 969 KB of a 1,519 KB
+/// report: 64% of the file, against 275 KB for the embedded type and 275 KB for
+/// everything else on the page. Nothing else in the document was worth
+/// optimising until this was.
 ///
 /// Three things go, and none of them is a fact:
 ///
@@ -671,9 +646,9 @@ fn marker(shape: usize, r: f64) -> String {
 /// Event markers pinned to the same axis as the ribbon below them.
 ///
 /// `kinds` is the vocabulary the notes file actually used, in first-seen order.
-/// Empty renders the plain circles the Python does, which is what the classic
-/// report and the parity harness need; non-empty shape-codes each kind and adds
-/// the `k<n>` class the filter row toggles.
+/// Non-empty shape-codes each kind and adds the `k<n>` class the filter row
+/// toggles; empty renders plain circles, which is what a notes file whose
+/// entries carry no `kind` at all gets.
 pub fn rail(events: &[Event], series: &[Day], width: f64, height: f64, kinds: &[String]) -> String {
     if series.is_empty() || events.is_empty() {
         return String::new();
@@ -714,8 +689,8 @@ pub fn rail(events: &[Event], series: &[Day], width: f64, height: f64, kinds: &[
         };
 
         if kinds.is_empty() {
-            // The Python's marker, character for character. The classic report
-            // and both parity legs render through here.
+            // A plain dot: no kind was named, so there is nothing to shape-code
+            // and no filter row for a class to talk to.
             let _ = write!(
                 parts,
                 "<g class=\"ev{conf}\" data-event=\"{}\" tabindex=\"0\" role=\"button\" aria-label=\"{}\">\
@@ -771,8 +746,8 @@ pub fn rail(events: &[Event], series: &[Day], width: f64, height: f64, kinds: &[
 
 /// How much of the archive the notes claim to have read, on the shared axis.
 ///
-/// **This is the field the Python layout has no way to express, and it is the
-/// one worth having.** A timeline with markers over one month and nothing over
+/// **Coverage is the field that changes what the page means.** A timeline with
+/// markers over one month and nothing over
 /// the next nine looks identical whether the rest was quiet or simply unread,
 /// and those are opposite facts about the same picture. The band draws the read
 /// span against the whole span, so the unread part is visibly unread rather

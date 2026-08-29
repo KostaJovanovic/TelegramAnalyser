@@ -1,12 +1,7 @@
 //! `tga <export folder> [options]`
 //!
-//! Ported from `analyser/main.py`'s `_cli`. Point it at a finished export and
-//! it writes one `report.html` beside it; nothing here reaches the network.
-//!
-//! `--stats` has no counterpart in the Python's own flag list — it was added to
-//! the Python analyser to produce the oracle phase 1 was diffed against, and it
-//! stays on both sides because `crates/tga-metrics/tests/oracle.rs` and
-//! `tools/diff_stats.py` are what stop the numbers drifting.
+//! Point it at a finished export and it writes one `report.html` beside it;
+//! nothing here reaches the network.
 
 use std::path::{Path, PathBuf};
 
@@ -39,11 +34,6 @@ Options
                       pinning it is what makes two runs on different days
                       comparable byte for byte -- which is what `save.bat
                       baseline` rests on.
-    --classic         write the report the Python analyser writes, byte for
-                      byte: no search, no event filters, no coverage band, and
-                      the uncompressed presence rows. This is what the parity
-                      harness renders, and it is here so the same thing can be
-                      produced by hand.
     --quiet           no per-file progress
 ";
 
@@ -68,7 +58,6 @@ fn main() -> Result<()> {
     let mut digest = false;
     let mut embed_fonts = true;
     let mut stats_out: Option<PathBuf> = None;
-    let mut classic = false;
     let mut quiet = false;
     let mut stamp: Option<String> = None;
 
@@ -97,7 +86,6 @@ fn main() -> Result<()> {
                 Some(text) => stamp = Some(text.clone()),
                 None => bail!("--stamp needs a date"),
             },
-            "--classic" => classic = true,
             "--quiet" => quiet = true,
             other => bail!("Unknown option: {other}\n\n{USAGE}"),
         }
@@ -107,7 +95,6 @@ fn main() -> Result<()> {
     // straight read cannot drift apart in what they pass the writer.
     let options = tga_report::Options {
         embed_fonts,
-        classic,
         stamp: stamp.unwrap_or_else(tga_report::today_stamp),
         ..Default::default()
     };
@@ -191,7 +178,7 @@ fn main() -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, to_python_json(&stats))?;
+        std::fs::write(path, to_sorted_json(&stats))?;
         println!("  {}", path.display());
     }
 
@@ -275,14 +262,15 @@ fn write_utf8(path: &Path, text: &str) -> std::io::Result<()> {
     std::fs::write(path, text)
 }
 
-/// `json.dumps(obj, indent=1, sort_keys=True, ensure_ascii=False)`.
+/// The stats dump: sorted keys, one-space indent, non-ASCII left alone.
 ///
 /// The key order comes free — serde_json's default map is a BTreeMap, so it
-/// serialises sorted, which is what `sort_keys=True` produces. The indent does
-/// not: `to_string_pretty` uses two spaces and the Python side uses one, and a
-/// whole-file diff of two identical documents is not a useful way to find that
-/// out.
-fn to_python_json(value: &serde_json::Value) -> String {
+/// serialises sorted. Sorted rather than declaration order because this file is
+/// compared against an earlier copy of itself byte for byte, and a diff that
+/// reorders is a diff nobody reads. The indent is one space rather than
+/// `to_string_pretty`'s two only because a 777 KB dump is 777 KB either way and
+/// the narrower one wraps less.
+fn to_sorted_json(value: &serde_json::Value) -> String {
     let mut buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);

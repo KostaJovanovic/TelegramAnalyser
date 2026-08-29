@@ -1,13 +1,15 @@
-//! The report's colour, taken from the exporter's own design language.
+//! The report's colour.
 //!
-//! Ported from `analyser/palette.py`.
+//! `tga-ui` holds the same tokens for the window, so the report and the app that
+//! produced it look like one product. The values are mirrored rather than
+//! imported, because this module's only job is to write a text file and it
+//! should not drag a GPU toolkit in to do it; `tga_ui::tokens::tests` asserts
+//! the two never drift.
 //!
-//! `telegram_rust`'s `tgx-ui/src/tokens.rs` holds the same set of tokens for
-//! the window, so the report and the app that produced it look like one
-//! product. The values are mirrored rather than imported, because this module's
-//! only job is to write a text file and it should not drag a GPU toolkit in to
-//! do it; `tga-ui` mirrors them in the other direction and
-//! `tga_ui::tokens::tests` asserts the two never drift.
+//! **One appearance.** There was a light set here too, kept alive only because
+//! a frozen reproduction of an older report emitted it and a byte diff compared
+//! that stylesheet character for character. Both are gone, and so is it: a
+//! second appearance is a second design to keep in step.
 //!
 //! **One hue does all the work.** The design has two colours and one red, which
 //! rules out a categorical palette — and that turns out to cost nothing,
@@ -18,53 +20,32 @@
 //!
 //! The ramp is not eyeballed. It is generated in OKLab, holding the accent's
 //! hue, with chroma clamped to the sRGB gamut at each step so the lightness
-//! steps come out even, and it passes four ordinal checks in both modes:
+//! steps come out even, and it passes four ordinal checks:
 //!
 //! ```text
-//! ramp             light                          dark
-//! monotone L       yes                            yes
-//! adjacent dL      0.073 (floor 0.06)             0.082
-//! end vs surface   2.37:1 (floor 2:1)             2.33:1
-//! hue spread       1 degree                       1 degree
+//! monotone L       yes
+//! adjacent dL      0.082 (floor 0.06)
+//! end vs surface   2.33:1 (floor 2:1)
+//! hue spread       1 degree
 //! ```
 //!
-//! The end step is what sets the span. On white, anything paler than 2:1 stops
-//! being a mark and becomes surface; on near-black the same is true going down.
-//! That is why the ramp runs past the accent into deeper red rather than
-//! starting at it — the accent is a step of the hue's ramp, not its end.
+//! The end step is what sets the span. On near-black, anything darker than 2:1
+//! stops being a mark and becomes surface. That is why the ramp runs past the
+//! accent into deeper red rather than starting at it — the accent is a step of
+//! the hue's ramp, not its end.
 //!
 //! `tests` below re-derives all four from the hex values, so an edit that
 //! breaks one fails the suite instead of quietly shipping a ramp nobody can
 //! read.
 
-/// One theme's tokens, **in emission order**.
+/// The tokens, **in emission order**.
 ///
 /// A slice of pairs rather than a map: the stylesheet is written by walking
-/// this, and a `BTreeMap` would sort the custom properties alphabetically. That
-/// changes no pixel and every line of the parity diff.
+/// this, and a `BTreeMap` would sort the custom properties alphabetically, which
+/// puts `accent` before `bg` and reads as nothing in particular.
 pub type Tokens = &'static [(&'static str, &'static str)];
 
-/// Mirrors `app/ui/theme.py::PALETTES`, plus the chart-only tokens.
-pub const LIGHT: Tokens = &[
-    ("bg", "#ffffff"),
-    ("fg", "#0a0a0a"),
-    ("muted", "#6b6b6b"),
-    ("hairline", "#0a0a0a"),
-    ("rule", "#e6e6e6"),
-    ("surface", "#f4f4f4"),
-    ("accent", "#e60023"),
-    ("accent_fg", "#ffffff"),
-    // Chart-only. `track` is an empty cell — a heatmap needs somewhere for zero
-    // to live that is not the lightest step of the ramp, or a silent day and a
-    // quiet day look the same.
-    ("track", "#efefef"),
-    // Not called `grid`: the exporter's palette uses that name for the window's
-    // backdrop texture, which is a different thing at a different value, and
-    // the drift check compares shared names.
-    ("gridline", "#ececec"),
-];
-
-pub const DARK: Tokens = &[
+pub const TOKENS: Tokens = &[
     ("bg", "#0a0a0a"),
     ("fg", "#e8e8e8"),
     ("muted", "#888888"),
@@ -73,38 +54,32 @@ pub const DARK: Tokens = &[
     ("surface", "#141414"),
     ("accent", "#ff3347"),
     ("accent_fg", "#ffffff"),
+    // Chart-only. `track` is an empty cell — a heatmap needs somewhere for zero
+    // to live that is not the first step of the ramp, or a silent day and a
+    // quiet day look the same.
     ("track", "#1c1c1c"),
+    // Not called `grid`: the exporter's palette uses that name for the window's
+    // backdrop texture, which is a different thing at a different value, and
+    // the drift check compares shared names.
     ("gridline", "#222222"),
 ];
 
-/// Light-to-dark, magnitude increasing. Validated; see the module docs.
-pub const RAMP_LIGHT: &[&str] = &["#e8918a", "#de7068", "#d24b47", "#c41422", "#a10a19"];
-pub const RAMP_DARK: &[&str] = &["#813435", "#a83f41", "#d14a4e", "#fc555b", "#fd8b88"];
+/// Deep-to-pale, magnitude increasing. Validated; see the module docs.
+pub const RAMP: &[&str] = &["#813435", "#a83f41", "#d14a4e", "#fc555b", "#fd8b88"];
 
+/// The class the document carries, and the only one it has.
 pub const DEFAULT: &str = "dark";
 
-/// The named theme, falling back to [`DEFAULT`] for anything else.
-pub fn tokens(theme: &str) -> Tokens {
-    match theme {
-        "light" => LIGHT,
-        _ => DARK,
-    }
+pub fn tokens() -> Tokens {
+    TOKENS
 }
 
-pub fn ramp(theme: &str) -> &'static [&'static str] {
-    match theme {
-        "light" => RAMP_LIGHT,
-        _ => RAMP_DARK,
-    }
+pub fn ramp() -> &'static [&'static str] {
+    RAMP
 }
 
-/// Whether a name is a theme this module has.
-pub fn known(theme: &str) -> bool {
-    theme == "light" || theme == "dark"
-}
-
-pub fn token(theme: &str, name: &str) -> &'static str {
-    tokens(theme)
+pub fn token(name: &str) -> &'static str {
+    TOKENS
         .iter()
         .find(|(key, _)| *key == name)
         .map(|(_, value)| *value)
@@ -115,11 +90,11 @@ pub fn token(theme: &str, name: &str) -> &'static str {
 ///
 /// Zero is the track, never the ramp's first step: a day nobody spoke and a day
 /// one person spoke are different facts and must not share a colour.
-pub fn step(theme: &str, value: f64, top: f64) -> &'static str {
+pub fn step(value: f64, top: f64) -> &'static str {
     if value <= 0.0 || top <= 0.0 {
-        return token(theme, "track");
+        return token("track");
     }
-    let ramp = ramp(theme);
+    let ramp = ramp();
     // Rank by share of the maximum, floored into the first step so a single
     // message is always visible. Linear: a heatmap that quietly applies a
     // square root reports a busy cell as busier than it was.
@@ -183,52 +158,40 @@ mod tests {
     /// Stated as a test rather than as prose because the numbers are the whole
     /// argument for the ramp being this and not something prettier, and prose
     /// does not fail.
-    fn check_ramp(theme: &str) {
-        let ramp = ramp(theme);
-        let surface = token(theme, "bg");
+    fn check_ramp() {
+        let ramp = ramp();
+        let surface = token("bg");
 
         let lightness: Vec<f64> = ramp.iter().map(|c| oklab(c).0).collect();
 
-        // 1. Monotone L. Light runs pale-to-deep, dark runs deep-to-pale;
-        //    either way it may never turn around, or two adjacent steps stop
-        //    being orderable.
+        // 1. Monotone L. This ramp runs deep-to-pale; the direction is read
+        //    from the ends rather than assumed, but either way it may never
+        //    turn around, or two adjacent steps stop being orderable.
         let descending = lightness[0] > lightness[lightness.len() - 1];
         for pair in lightness.windows(2) {
             if descending {
-                assert!(
-                    pair[0] > pair[1],
-                    "{theme}: L is not monotone: {lightness:?}"
-                );
+                assert!(pair[0] > pair[1], "L is not monotone: {lightness:?}");
             } else {
-                assert!(
-                    pair[0] < pair[1],
-                    "{theme}: L is not monotone: {lightness:?}"
-                );
+                assert!(pair[0] < pair[1], "L is not monotone: {lightness:?}");
             }
         }
 
         // 2. Adjacent dL, floor 0.06. Below this two steps read as one.
         for pair in lightness.windows(2) {
             let delta = (pair[0] - pair[1]).abs();
-            assert!(
-                delta >= 0.06,
-                "{theme}: adjacent dL {delta:.3} is under 0.06"
-            );
+            assert!(delta >= 0.06, "adjacent dL {delta:.3} is under 0.06");
         }
 
         // 3. The end step against the surface, floor 2:1. Below it the mark
         //    stops being a mark and becomes background.
         let end = contrast(ramp[ramp.len() - 1], surface);
-        assert!(
-            end >= 2.0,
-            "{theme}: end vs surface is {end:.2}:1, under 2:1"
-        );
+        assert!(end >= 2.0, "end vs surface is {end:.2}:1, under 2:1");
         // And the other end, which is the one that actually binds: on white the
         // palest step is the one at risk.
         let start = contrast(ramp[0], surface);
         assert!(
             start >= 2.0,
-            "{theme}: first step vs surface is {start:.2}:1, under 2:1"
+            "first step vs surface is {start:.2}:1, under 2:1"
         );
 
         // 4. Hue spread. This is a *single-hue* ramp; a step that drifts in hue
@@ -236,50 +199,38 @@ mod tests {
         let hues: Vec<f64> = ramp.iter().map(|c| hue_degrees(c)).collect();
         let spread = hues.iter().cloned().fold(f64::MIN, f64::max)
             - hues.iter().cloned().fold(f64::MAX, f64::min);
-        assert!(spread <= 12.0, "{theme}: hue spreads {spread:.1} degrees");
+        assert!(spread <= 12.0, "hue spreads {spread:.1} degrees");
     }
 
     #[test]
-    fn the_light_ramp_passes_all_four_ordinal_checks() {
-        check_ramp("light");
-    }
-
-    #[test]
-    fn the_dark_ramp_passes_all_four_ordinal_checks() {
-        check_ramp("dark");
-    }
-
-    #[test]
-    fn both_themes_carry_the_same_token_names_in_the_same_order() {
-        // A token present in one appearance and not the other is a report that
-        // renders in light and falls apart in dark, and the stylesheet emits
-        // both blocks from this list.
-        let light: Vec<&str> = LIGHT.iter().map(|(k, _)| *k).collect();
-        let dark: Vec<&str> = DARK.iter().map(|(k, _)| *k).collect();
-        assert_eq!(light, dark);
+    fn the_ramp_passes_all_four_ordinal_checks() {
+        check_ramp();
     }
 
     #[test]
     fn zero_is_the_track_and_never_the_ramps_first_step() {
         // The stated property. A day nobody spoke and a day one person spoke
         // are different facts.
-        assert_eq!(step("dark", 0.0, 100.0), token("dark", "track"));
-        assert_eq!(step("dark", 5.0, 0.0), token("dark", "track"));
-        assert_ne!(step("dark", 1.0, 100.0), token("dark", "track"));
+        assert_eq!(step(0.0, 100.0), token("track"));
+        assert_eq!(step(5.0, 0.0), token("track"));
+        assert_ne!(step(1.0, 100.0), token("track"));
     }
 
     #[test]
     fn the_top_value_lands_on_the_last_step_rather_than_past_it() {
         // `value / top * len` is exactly `len` at the maximum, which indexes
         // one past the end. The clamp is what stops that being a panic.
-        assert_eq!(step("light", 100.0, 100.0), RAMP_LIGHT[4]);
-        assert_eq!(step("light", 1.0, 100.0), RAMP_LIGHT[0]);
-        assert_eq!(step("light", 50.0, 100.0), RAMP_LIGHT[2]);
+        assert_eq!(step(100.0, 100.0), RAMP[4]);
+        assert_eq!(step(1.0, 100.0), RAMP[0]);
+        assert_eq!(step(50.0, 100.0), RAMP[2]);
     }
 
     #[test]
-    fn an_unknown_theme_falls_back_to_the_default() {
-        assert!(!known("solarized"));
-        assert_eq!(tokens("solarized"), tokens(DEFAULT));
+    fn a_token_nobody_defined_is_black_rather_than_a_panic() {
+        // The stylesheet is written by looking names up, and a report that
+        // fails to render because one custom property was renamed is worse
+        // than one rule that comes out wrong.
+        assert_eq!(token("nosuchtoken"), "#000000");
+        assert_eq!(token("accent"), "#ff3347");
     }
 }

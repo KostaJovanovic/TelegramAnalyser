@@ -1,15 +1,14 @@
 //! The report against a committed copy of itself.
 //!
-//! **This catches drift. It does not claim correctness** — `parity.rs` is what
-//! does that, by diffing against the Python analyser on two real archives. What
-//! a golden file adds is a check that runs on a fresh clone with no corpus, no
-//! drives and no Python, and that names the character where an edit changed the
-//! output.
+//! **This catches drift. It does not claim correctness.** What it adds over
+//! `save.bat baseline` — which compares whole reports on two real archives — is
+//! that it runs on a fresh clone with no corpus and no drives, and that it names
+//! the character where an edit changed the output.
 //!
 //! The fixture is **synthetic**, and that is forced rather than chosen:
-//! `reference/` and `*.stats.json` are gitignored because they are verbatim
-//! chat history from real people, so a golden cut from a real archive could not
-//! be committed at all. `fixture.stats.json` is hand-written to the shape
+//! `*.stats.json` is gitignored because a real dump is verbatim chat history
+//! from real people, so a golden cut from a real archive could not be committed
+//! at all. `fixture.stats.json` is hand-written to the shape
 //! `tga_metrics::analyse` returns, and it carries the awkward cases on purpose
 //! — a name with `&` and `<` in it, a person who never spoke, a two-day
 //! silence, an alias list, a non-ASCII topic name, a superlative whose value is
@@ -65,7 +64,7 @@ fn events() -> Vec<Event> {
             topic: Some(0),
             messages: vec![1, 2, 17],
             confidence: "high".into(),
-            // The `_timeline` fields. None of these can reach a classic render.
+            // The fields only the `_timeline` notes layout carries.
             time: "20:59".into(),
             weight: "major".into(),
             who: vec!["Ana".into(), "Nobody At All".into()],
@@ -77,9 +76,9 @@ fn events() -> Vec<Event> {
             end: None,
             title: "A moment, uncited & unsure".into(),
             summary: String::new(),
-            // The loader defaults an absent kind to `milestone`, so this shape
-            // is one only a hand-built `Event` reaches — and the classic
-            // renderer has a branch for it, which nothing else would cover.
+            // The loader defaults an absent kind to `milestone`, so an event
+            // with no kind at all is a shape only a hand-built `Event`
+            // reaches, and `rail` has a branch for it that nothing else covers.
             kind: String::new(),
             topic: None,
             messages: vec![],
@@ -114,8 +113,6 @@ fn events() -> Vec<Event> {
 fn notes() -> Notes {
     Notes {
         events: events(),
-        // The block the Python layout cannot express, so it appears only in the
-        // surface render — which is exactly what the two goldens pin.
         coverage: Some(Coverage {
             from: chrono::NaiveDate::from_ymd_opt(2025, 1, 1),
             to: chrono::NaiveDate::from_ymd_opt(2025, 1, 4),
@@ -134,7 +131,7 @@ fn stats() -> Value {
     .expect("the fixture parses")
 }
 
-fn render(classic: bool) -> String {
+fn rendered() -> String {
     let stats = stats();
     tga_report::render(
         &stats,
@@ -143,42 +140,26 @@ fn render(classic: bool) -> String {
         &tga_report::Options {
             embed_fonts: false,
             stamp: "5 September 2025".into(),
-            classic,
             ..Default::default()
         },
     )
 }
 
-fn rendered() -> String {
-    render(false)
-}
-
 #[test]
 fn the_report_matches_the_committed_golden() {
-    check_golden("golden.html", render(false));
-}
-
-/// The classic render gets a golden of its own.
-///
-/// The parity legs already pin it against the Python analyser, but only where a
-/// corpus is present. This one runs everywhere and does one thing the parity
-/// legs cannot: it fails if a phase-5 addition **leaks into the classic path**.
-/// That is the whole load-bearing claim of the `classic` flag, and without a
-/// check it is a claim maintained by care.
-#[test]
-fn the_classic_render_matches_its_own_committed_golden() {
-    check_golden("golden-classic.html", render(true));
+    check_golden("golden.html", rendered());
 }
 
 #[test]
-fn the_surface_adds_and_the_classic_path_stays_exactly_as_it_was() {
-    // Stated as a property rather than left to the two goldens, so a failure
-    // says *what* leaked rather than only where.
-    // **Markup, not CSS.** The stylesheet names `.kind-filter` and `.cov-read`
-    // whether or not anything uses them, so matching those alone would let a
-    // feature that renders nothing pass on the strength of its own rules.
-    // Every needle here is an element the surface actually emits.
-    const SURFACE_ONLY: &[(&str, &str)] = &[
+fn every_interactive_feature_is_drawn_into_the_document() {
+    // The report renders every view server-side and lets JS only filter and pan
+    // what is already there, so each of these is markup rather than a class
+    // name. **Markup, not CSS.** The stylesheet names `.kind-filter` and
+    // `.cov-read` whether or not anything uses them, so matching those alone
+    // would let a feature that renders nothing pass on the strength of its own
+    // rules.
+    let html = rendered();
+    for (what, needle) in [
         ("the search box", "<input class=\"find\""),
         ("the shared axis", "<div id=\"axis\" hidden"),
         ("the kind filters", "<div class=\"kinds\">"),
@@ -189,35 +170,10 @@ fn the_surface_adds_and_the_classic_path_stays_exactly_as_it_was() {
         ("the `who` line", "<p class=\"who\">"),
         ("the tag line", "<p class=\"tags\">"),
         ("a shape-coded marker", "<g class=\"ev k"),
-        // The `dynamics` branch has no Python counterpart at all, so this
-        // section is the one place where a leak would not merely change the
-        // classic document but put a figure in it that no oracle has ever
-        // seen. Both the section and its nav entry are checked.
         ("the between-people section", "<section id=\"between\">"),
         ("its nav entry", "href=\"#between\""),
-    ];
-
-    let classic = render(true);
-    for (what, needle) in SURFACE_ONLY {
-        assert!(
-            !classic.contains(needle),
-            "{what} leaked into the classic render, which the parity legs pin"
-        );
-    }
-    // The classic render must also keep the marks the surface replaced, or
-    // "nothing leaked" would be satisfied by it having stopped drawing.
-    for (what, needle) in [
-        ("the uncompressed presence rows", "<rect class=\"cell\""),
-        ("the plain circular marker", "<circle class=\"ev-dot\""),
     ] {
-        assert!(classic.contains(needle), "the classic render lost {what}");
-    }
-
-    // ...and the surface really does add them, or the assertions above pass by
-    // testing nothing.
-    let surface = render(false);
-    for (what, needle) in SURFACE_ONLY {
-        assert!(surface.contains(needle), "the surface render lost {what}");
+        assert!(html.contains(needle), "the report lost {what}");
     }
 }
 
@@ -287,9 +243,8 @@ fn the_golden_exercises_the_cases_it_was_built_for() {
         ("a non-ASCII topic", "ćaskanje"),
         ("a string-valued superlative", "class=\"big\">1.4 MB<"),
         ("a spanning event", "ev-span"),
-        // `ev k1 conf-low` in the surface render, `ev conf-low` in the classic
-        // one — the shape class sits between them, so match the part that is
-        // the actual claim.
+        // `ev k1 conf-low`: the shape class sits between the two, so match the
+        // part that is the actual claim.
         ("a low-confidence event", "conf-low"),
         ("a shape-coded marker", "class=\"ev k0"),
         ("the coverage prose", "Only the first four days were read."),

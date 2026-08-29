@@ -1,22 +1,19 @@
 //! Assemble one self-contained `report.html`.
 //!
-//! Ported from `analyser/report.py`.
-//!
 //! Self-contained means exactly that: one file, no folder beside it, no request
 //! to anything. The fonts are base64'd into the stylesheet, the charts are
 //! inline SVG, and the only script is the twenty lines that run the tooltips
 //! and the two switches. An archive is something you keep, and a report that
 //! needs a CDN to render is a report that stops working the year the CDN does.
 //!
-//! The visual language is the exporter's own — `app/ui/theme.py`, itself taken
-//! from the Analyser site's stylesheet — so hairlines do the dividing, corners
-//! are square, numbers are set in Geist Mono, and section headings are
+//! The visual language is Swiss/International: hairlines do the dividing,
+//! corners are square, numbers are set in Geist Mono, and section headings are
 //! letterspaced uppercase micro-type. There are no cards.
 //!
 //! **This crate depends on neither `tga-read` nor `tga-metrics.`** It renders
 //! from a `serde_json::Value` of the shape `--stats` dumps, which is what lets
-//! `tests/golden.rs` and `tests/parity.rs` replay a recorded fixture through
-//! the writer with no export on disk. See `Cargo.toml`.
+//! `tests/golden.rs` replay a recorded fixture through the writer with no
+//! export on disk. See `Cargo.toml`.
 
 use serde_json::Value;
 use tga_notes::Notes;
@@ -34,50 +31,38 @@ pub use sections::{Names, WIDTH};
 // the stylesheet
 // ---------------------------------------------------------------------------
 
-/// The custom properties, as `<html>` class blocks.
+/// The custom properties, as one `<html>` class block.
 ///
-/// **The report is dark only, and the surface emits one block.** The light
-/// palette is still here, and still emitted by the classic render, for one
-/// reason: `report.py` writes both blocks and the parity legs compare the
-/// stylesheet character for character. The classic path is a frozen
-/// reproduction of that document, not a second product — so it keeps a light
-/// theme nothing offers to switch to, and the surface does not.
-fn tokens_css(classic: bool) -> String {
-    fn block(theme: &str) -> String {
-        let pairs: String = palette::tokens(theme)
-            .iter()
-            .map(|(k, v)| format!("--{k}:{v};"))
-            .collect();
-        let ramp: String = palette::ramp(theme)
-            .iter()
-            .enumerate()
-            .map(|(i, c)| format!("--r{}:{c};", i + 1))
-            .collect();
-        format!("{pairs}{ramp}--self:{};", palette::token(theme, "rule"))
-    }
-    if classic {
-        return format!(
-            "html.dark{{{}}}html.light{{{}}}",
-            block("dark"),
-            block("light")
-        );
-    }
-    format!("html.dark{{{}}}", block("dark"))
+/// **The report is dark only.** One block, and no control to switch away from
+/// it: a second appearance is a second design to keep in step, and this one has
+/// two colours and a red to keep in step already.
+fn tokens_css() -> String {
+    let pairs: String = palette::tokens()
+        .iter()
+        .map(|(k, v)| format!("--{k}:{v};"))
+        .collect();
+    let ramp: String = palette::ramp()
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("--r{}:{c};", i + 1))
+        .collect();
+    format!(
+        "html.dark{{{pairs}{ramp}--self:{};}}",
+        palette::token("rule")
+    )
 }
 
-/// The stylesheet, verbatim from `report.py`.
+/// The stylesheet.
 ///
-/// **The `\u{91}2` in the `details[open]` marker is deliberate, and it is a
-/// defect carried on purpose.** The pair before the `+` marker's opposite is
-/// `content:'<U+0091>2 '` — a C1 control character followed by an ASCII `2`,
-/// which is what a `−` becomes after one bad encoding round trip. A browser
-/// renders it as a stray `2`, so the open marker reads `2` where it should read
-/// `−`.
-///
-/// It is reproduced rather than corrected so the parity diff against the Python
-/// report stays a clean zero. Correcting it is a one-line change, and it
-/// belongs in the harness's declared-divergence list — not slipped in under a
-/// port, where "the diff is noisy" and "the port is wrong" look identical.
+/// **The `\u{91}2` in the `details[open]` marker is a defect**, inherited from
+/// the program this one was ported from: a C1 control character followed by an
+/// ASCII `2`, which is what a `−` becomes after one bad encoding round trip, and
+/// which a browser renders as a stray `2` on an open disclosure. It survived
+/// this long because reproducing it kept a byte diff at zero, and that diff is
+/// now gone. [`CSS_SURFACE`] overrides it with a real minus; the two are merged
+/// and this literal deleted in the commit that moves the stylesheet out into its
+/// own file, which is the one place the change is reviewable as a change rather
+/// than as noise inside a larger move.
 const CSS: &str = concat!(
     r#"
 *,*::before,*::after{box-sizing:border-box}
@@ -280,11 +265,15 @@ details.data[open] summary{color:var(--fg)}
 "#
 );
 
-/// Everything phase 5 adds to the stylesheet.
+/// The second half of the stylesheet, still appended rather than merged.
 ///
-/// Appended after [`CSS`] rather than merged into it, so the classic render is
-/// byte-for-byte the Python's and a diff of this file shows exactly what the
-/// redesign changed. Nothing here restyles an existing rule; it only adds.
+/// It was split so that the frozen render could omit it. That render is gone
+/// and the split has no reason left; the two are merged when the stylesheet
+/// moves out into its own file, and kept apart until then only so that the
+/// commit which deleted the frozen render changed no bytes at all.
+// NOTE: the `/* */` blocks in this string are *stylesheet* comments -- they are
+// emitted into the report, so editing one changes the file's bytes. They are
+// left exactly as they were until the merge that deletes them.
 const CSS_SURFACE: &str = r#"
 /* -- the one thing here that overrides rather than adds ------------------- */
 /* `report.py` ships `content:'<U+0091>2 '` on this rule -- a C1 control
@@ -566,19 +555,6 @@ pub struct Options {
     /// only behavioural difference in the port and it is one that makes the
     /// output *more* reproducible, not less.
     pub stamp: String,
-    /// Render the document `report.py` renders, byte for byte.
-    ///
-    /// **This is what keeps the oracle alive past phase 5.** PLAN.md always
-    /// said the report parity legs would expire the moment this analyser showed
-    /// something the Python one never did — and phase 5 is exactly that. One
-    /// bool avoids the expiry: `tests/parity.rs` renders with `classic: true`
-    /// and goes on comparing two million characters against a working
-    /// implementation, while `tga <folder>` renders the report this rewrite was
-    /// for. The classic path is frozen; every phase-5 addition sits behind an
-    /// `if !classic` and adds nothing to it, which is also what makes "did this
-    /// change touch the port?" a question the suite answers rather than a
-    /// judgement call.
-    pub classic: bool,
 }
 
 impl Default for Options {
@@ -587,7 +563,6 @@ impl Default for Options {
             embed_fonts: true,
             source: SOURCE.to_string(),
             stamp: today_stamp(),
-            classic: false,
         }
     }
 }
@@ -620,7 +595,6 @@ pub fn names_from_stats(stats: &Value) -> Names {
 
 /// The whole report, as one string.
 pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) -> String {
-    let classic = options.classic;
     let title = format!(
         "{} — archive report",
         stats["export"]["name"].as_str().unwrap_or_default()
@@ -628,27 +602,19 @@ pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) ->
 
     let body = format!(
         "{}{}{}{}{}{}{}{}{}</section>{}{}{}",
-        sections::masthead(stats, classic),
-        sections::timeline(stats, notes, names, classic),
+        sections::masthead(stats),
+        sections::timeline(stats, notes, names),
         sections::rhythm(stats),
-        sections::people(stats, classic),
+        sections::people(stats),
         sections::conversation(stats, names),
-        // The `dynamics` branch, and the only section with no counterpart in
-        // `report.py`. Behind `classic` like every other phase-5 addition, so
-        // the parity legs go on diffing two documents that are supposed to be
-        // the same one — see `Options::classic`.
-        if classic {
-            String::new()
-        } else {
-            sections::between(stats)
-        },
+        sections::between(stats),
         sections::said(stats),
         // The churn section's heading is written here rather than inside
         // `churn`, because that function returns nothing at all for an export
         // with no dated months and the `<section>` still has to close.
         section_head("Coming and going", "churn"),
         sections::churn(stats),
-        sections::topics(stats, classic),
+        sections::topics(stats),
         sections::records(stats),
         sections::notes(stats, &notes.source, &options.source, &options.stamp),
     );
@@ -656,19 +622,11 @@ pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) ->
     // The compact presence rows leave their bucket labels out of every cell —
     // that omission is most of the size budget — so the labels are written into
     // the document once, here, and the tooltip is composed from the pointer's
-    // position. Absent in classic, where every cell carries its own.
-    let axis = if classic {
-        String::new()
-    } else {
-        shared_axis(stats)
-    };
-    let extra_css = if classic { "" } else { CSS_SURFACE };
-    let extra_js = if classic { "" } else { JS_SURFACE };
-    let kind_rules = if classic {
-        String::new()
-    } else {
-        kind_css(notes)
-    };
+    // position.
+    let axis = shared_axis(stats);
+    let extra_css = CSS_SURFACE;
+    let extra_js = JS_SURFACE;
+    let kind_rules = kind_css(notes);
 
     format!(
         "<!doctype html>\n<html lang=\"en\" class=\"{}\"><head><meta charset=\"utf-8\">\
@@ -678,7 +636,7 @@ pub fn render(stats: &Value, names: &Names, notes: &Notes, options: &Options) ->
         palette::DEFAULT,
         esc(&title),
         assets::font_css(options.embed_fonts),
-        tokens_css(classic),
+        tokens_css(),
     )
 }
 
@@ -806,26 +764,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_classic_render_still_carries_both_blocks_and_the_switch() {
-        // Not a second product — a byte-for-byte reproduction of `report.py`,
-        // which had a theme switch. The parity legs compare the stylesheet
-        // character for character, so this is load-bearing rather than
-        // leftover.
-        let html = render(
-            &bare(),
-            &Names::new(),
-            &Notes::default(),
-            &Options {
-                classic: true,
-                ..options()
-            },
-        );
-        assert!(html.contains("html.dark{"));
-        assert!(html.contains("html.light{"));
-        assert!(html.contains("id=\"theme\""));
-    }
-
     /// A `dynamics` branch whose people have stopped posting.
     ///
     /// The golden fixture cannot reach this: its archive is seven days long, so
@@ -883,24 +821,6 @@ mod tests {
         assert!(html.contains("30 Jun 2025, the last day in this archive"));
         // Escaped like every other name that came out of an export.
         assert!(!html.contains("Bob & Co <the second>"));
-    }
-
-    #[test]
-    fn a_dynamics_branch_never_reaches_the_classic_render() {
-        // The whole point of the flag: this branch has no Python counterpart,
-        // so nothing in the parity harness would notice it arriving.
-        let html = render(
-            &drifted(),
-            &Names::new(),
-            &Notes::default(),
-            &Options {
-                classic: true,
-                ..options()
-            },
-        );
-        assert!(!html.contains("id=\"between\""));
-        assert!(!html.contains("#between"));
-        assert!(!html.contains("Gone quiet"));
     }
 
     #[test]
@@ -1029,12 +949,19 @@ mod tests {
     }
 
     #[test]
-    fn the_carried_upstream_defect_is_still_carried() {
-        // If this ever fails it means somebody "fixed" the U+0091 in the
-        // stylesheet, which is fine -- but it is a divergence from the Python
-        // and it has to be declared in the parity harness, not discovered
-        // there.
+    fn the_broken_marker_is_still_overridden_rather_than_merely_absent() {
+        // Two rules, and the reader only ever sees the second. The first is the
+        // inherited U+0091 defect and the second corrects it, so both have to
+        // be here in this order or an open disclosure shows a stray "2". When
+        // the stylesheet moves out into its own file the two collapse into one
+        // and this test loses its first assertion.
         let html = render(&bare(), &Names::new(), &Notes::default(), &options());
-        assert!(html.contains("details.data[open] summary::before{content:'\u{91}2 '}"));
+        let broken = html
+            .find("details.data[open] summary::before{content:'\u{91}2 '}")
+            .expect("the inherited defect");
+        let fixed = html
+            .find("details.data[open] summary::before{content:'\\2212 '}")
+            .expect("and the rule that beats it");
+        assert!(broken < fixed, "the correction has to come last to win");
     }
 }

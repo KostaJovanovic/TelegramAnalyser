@@ -33,12 +33,6 @@ rem program with the window taken off.
 set "EXENAME=TelegramAnalyser.exe"
 set "CLINAME=tga.exe"
 
-rem The Python analyser, which is the oracle for both the numbers and the HTML.
-rem Its venv, not the system python: `analyser.read` and `analyser.metrics` are
-rem plain modules, but the package imports PySide6 on the window path.
-set "PYSRC=C:\Users\Kosta\Projekti\telegram"
-set "PYEXE=%PYSRC%\.venv\Scripts\python.exe"
-
 rem This machine owns both exports, so a `cargo test` here that finds no corpus
 rem has not "skipped the legs" -- it has a broken setup, and libtest throws away
 rem the eprintln that would have said so. With this set, the corpus tests panic
@@ -67,8 +61,6 @@ if /i "%ACTION%"=="run"     goto runwindow
 if /i "%ACTION%"=="window"  goto runwindow
 if /i "%ACTION%"=="report"  goto report
 if /i "%ACTION%"=="stats"   goto stats
-if /i "%ACTION%"=="oracle"  goto oracle
-if /i "%ACTION%"=="parity"  goto parity
 if /i "%ACTION%"=="baseline" goto baseline
 if /i "%ACTION%"=="bless"   goto bless
 if /i "%ACTION%"=="clean"   goto clean
@@ -86,14 +78,12 @@ echo   6  build    cargo build --release, then copy both exes into dist\
 echo   7  run      open the window
 echo   8  report   write report.html for an export folder
 echo   9  stats    write the --stats dump for an export folder
-echo   10 oracle   re-record the Python side for both corpora
-echo   11 parity   diff both reports against the Python analyser's
-echo   12 baseline diff both reports against what this program wrote before
-echo   13 bless    re-record the two committed goldens
-echo   14 clean    report the build cache, and empty it
-echo   15 quit
+echo   10 baseline diff both reports against what this program wrote before
+echo   11 bless    re-record the committed golden
+echo   12 clean    report the build cache, and empty it
+echo   13 quit
 echo.
-set /p CHOICE=select [1-15]:
+set /p CHOICE=select [1-13]:
 if "%CHOICE%"=="1" goto save
 if "%CHOICE%"=="2" (set "COMMIT_ONLY=1" & goto save)
 if "%CHOICE%"=="3" goto push
@@ -103,12 +93,10 @@ if "%CHOICE%"=="6" goto build
 if "%CHOICE%"=="7" goto runwindow
 if "%CHOICE%"=="8" goto report
 if "%CHOICE%"=="9" goto stats
-if "%CHOICE%"=="10" goto oracle
-if "%CHOICE%"=="11" goto parity
-if "%CHOICE%"=="12" goto baseline
-if "%CHOICE%"=="13" goto bless
-if "%CHOICE%"=="14" goto clean
-if "%CHOICE%"=="15" exit /b 0
+if "%CHOICE%"=="10" goto baseline
+if "%CHOICE%"=="11" goto bless
+if "%CHOICE%"=="12" goto clean
+if "%CHOICE%"=="13" exit /b 0
 echo [err]  invalid choice
 goto menu
 
@@ -417,104 +405,20 @@ echo.
 echo === stats: %FOLDER% ===
 call :checkcargo
 if errorlevel 1 goto end
-if not exist "reference" mkdir "reference"
-cargo run --release -p tga-cli --bin tga -- "%FOLDER%" --quiet --stats "reference\rust.stats.json" --out "reference\_stats-only.html"
+cargo run --release -p tga-cli --bin tga -- "%FOLDER%" --quiet --stats "%FOLDER%\stats.json" --out "%FOLDER%\report.html"
 if errorlevel 1 set SAVE_ERROR=1
 goto end
 
 
 rem ---------------------------------------------------------------------------
-rem Re-record the Python side. Both dumps carry verbatim chat content, which is
-rem why reference\ is gitignored -- see the note there.
-:oracle
-echo.
-echo === oracle: re-record the Python analyser ===
-if not exist "%PYEXE%" (
-  echo [skip] no venv at %PYEXE%
-  goto end
-)
-if not exist "reference" mkdir "reference"
-rem The stamp has to be the same on both sides or the Notes line differs and
-rem nothing else does. Today, on both, so a run that straddles midnight is the
-rem only way to get it wrong -- and re-running fixes that.
-for /f %%d in ('powershell -NoProfile -Command "(Get-Date).ToString('d MMMM yyyy',[Globalization.CultureInfo]::InvariantCulture)"') do set "STAMP=%%d"
-echo [use]  stamp "%STAMP%"
-
-call :onecorpus "ua-kolab" "%UAEXPORT%"
-call :onecorpus "krgm" "%KRGMEXPORT%"
-goto end
-
-:onecorpus
-if not exist "%~2" (
-  echo [skip] %~1: no export at %~2
-  exit /b 0
-)
-echo.
-echo [rec]  %~1 stats
-call :clock TS
-"%PYEXE%" tools\dump_python_stats.py "%~2" "reference\%~1.stats.json"
-if errorlevel 1 (set SAVE_ERROR=1 & exit /b 1)
-call :since TS "%~1 stats"
-echo [rec]  %~1 report
-call :clock TS
-"%PYEXE%" tools\dump_python_report.py "%~2" "reference\%~1.html" --stamp "%STAMP%"
-if errorlevel 1 (set SAVE_ERROR=1 & exit /b 1)
-call :since TS "%~1 report"
-exit /b 0
-
-
-rem ---------------------------------------------------------------------------
-rem The HTML leg, from outside. `cargo test -p tga-report --test parity` is the
-rem same comparison; what this adds is a readable account of *where* the two
-rem differ, which an assert on a 1.5 MB string cannot give.
-:parity
-echo.
-echo === parity: the report against the Python analyser's ===
-call :checkcargo
-if errorlevel 1 goto end
-cargo build --release -p tga-cli
-if errorlevel 1 (set SAVE_ERROR=1 & goto end)
-
-call :oneparity "ua-kolab" "%UAEXPORT%"
-call :oneparity "krgm" "%KRGMEXPORT%"
-goto end
-
-:oneparity
-if not exist "reference\%~1.html" (
-  echo [skip] %~1: no recorded Python report -- run: save.bat oracle
-  exit /b 0
-)
-if not exist "%~2" (
-  echo [skip] %~1: no export at %~2
-  exit /b 0
-)
-echo.
-echo [leg]  %~1
-call :clock TS
-rem **--classic.** The oracle is the document `report.py` writes, and `tga` now
-rem writes the redesign by default. Without this flag the leg diffs the phase-5
-rem report against the Python one and reports the whole redesign as a failure,
-rem which is true and useless.
-target\release\tga.exe "%~2" --quiet --classic --out "reference\rust-%~1.html"
-if errorlevel 1 (set SAVE_ERROR=1 & exit /b 1)
-python tools\diff_report.py "reference\%~1.html" "reference\rust-%~1.html"
-if errorlevel 1 (
-  echo [err]  %~1 differs
-  set SAVE_ERROR=1
-)
-call :since TS "%~1"
-exit /b 0
-
-
-rem ---------------------------------------------------------------------------
 rem What this program wrote before, against what it writes now.
 rem
-rem **This is what replaces the Python oracle.** The parity legs above could only
-rem ever answer "does Rust still match Python", which stops being a useful
-rem question the moment the two are meant to differ -- and the refactor is
-rem exactly that moment. This asks the question that survives it: did anything I
-rem just changed alter one byte of the report? Steps 2 to 4 of REFACTOR.md are
-rem all supposed to answer no, so a difference is a mistake rather than a
+rem **This is what replaced the Python oracle**, which is now deleted. That
+rem harness could only ever answer "does this still match the program it was
+rem ported from", which stops being a useful question the moment the two are
+rem meant to differ. This asks the question that survives: did anything I just
+rem changed alter one byte of the report? Steps 2 to 4 of REFACTOR.md are all
+rem supposed to answer no, so a difference there is a mistake rather than a
 rem judgement call.
 rem
 rem Both files are compared byte for byte, the stats dump included. That is only

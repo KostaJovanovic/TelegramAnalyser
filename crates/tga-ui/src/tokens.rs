@@ -132,7 +132,7 @@ mod tests {
 
     /// The report's own value for a token, as it writes it into the stylesheet.
     fn from_report(name: &str) -> Hsla {
-        let text = tga_report::palette::token("dark", name);
+        let text = tga_report::palette::token(name);
         hex(u32::from_str_radix(text.trim_start_matches('#'), 16).expect("hex"))
     }
 
