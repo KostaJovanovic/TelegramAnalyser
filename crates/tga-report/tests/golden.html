@@ -156,7 +156,7 @@ details.data summary{
   cursor:pointer;list-style:none;padding:9px 0;border-top:1px solid var(--rule);
 }
 details.data summary::before{content:'+ ';color:var(--accent)}
-details.data[open] summary::before{content:'2 '}
+details.data[open] summary::before{content:'\2212 '}
 details.data summary::-webkit-details-marker{display:none}
 details.data summary:hover{color:var(--fg)}
 details.data[open] summary{color:var(--fg)}
@@ -195,16 +195,6 @@ details.data[open] summary{color:var(--fg)}
 }
 #tip.on{opacity:1}
 @media print{.switches,.toc,#tip{display:none}body{max-width:none}}
-
-/* -- the one thing here that overrides rather than adds ------------------- */
-/* `report.py` ships `content:'<U+0091>2 '` on this rule -- a C1 control
-   character followed by an ASCII 2, which is what a minus sign becomes after a
-   bad encoding round trip, and which every browser renders as a stray "2" on an
-   open disclosure. The classic path reproduces it so the parity diff stays a
-   clean zero. Here there is no diff to answer to, so it is simply fixed: this
-   rule has equal specificity and comes later, so it wins. */
-details.data[open] summary::before{content:'\2212 '}
-
 /* -- search -------------------------------------------------------------- */
 .find{
   background:none;border:0;border-right:1px solid var(--rule);color:var(--fg);
@@ -337,7 +327,6 @@ html.hide-k0 .ev.k0,html.hide-k0 .events li.k0{display:none}html.hide-k1 .ev.k1,
     li.addEventListener('click',function(){selectEvent(li.id.replace('event-',''));});
   });
 })();
-
 (function(){
   var root=document.documentElement;
 

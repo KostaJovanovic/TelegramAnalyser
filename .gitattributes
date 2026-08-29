@@ -11,13 +11,19 @@
 # the render on every line, and the failure reads as "the report drifted" on a
 # fresh clone that has changed nothing. `-text` disables conversion in both
 # directions, so what is committed is what lands on disk.
-crates/tga-report/tests/golden.html          -text
-crates/tga-report/tests/golden-classic.html  -text
-crates/tga-report/tests/synthetic/python.html -text
+crates/tga-report/tests/golden.html           -text
 crates/tga-report/tests/synthetic/stats.json  -text
 crates/tga-report/tests/synthetic/result.json -text
 crates/tga-report/tests/synthetic/events.json -text
 crates/tga-report/tests/fixture.stats.json    -text
+
+# **The stylesheet and the script are copied into the report verbatim**, so they
+# are the same case as the goldens one step earlier: checked out with CRLF, every
+# report this program writes differs from the committed golden on 500 lines, and
+# nothing in the source has changed. They are `include_str!`d, which is exactly
+# why they need this and an ordinary `.css` would not.
+crates/tga-report/assets/report.css -text
+crates/tga-report/assets/report.js  -text
 
 # **cmd's `goto` cannot find a label in an LF-only batch file.** It fails with
 # "The system cannot find the batch label specified" partway through a run that
