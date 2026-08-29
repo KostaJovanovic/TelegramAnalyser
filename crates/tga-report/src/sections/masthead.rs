@@ -34,6 +34,13 @@ pub fn masthead(stats: &Stats) -> String {
     if stats.dynamics.is_some() {
         links.insert(4, ("between", "Between people"));
     }
+    // Same gate as the section itself: with no member list *and* nobody silent,
+    // `members` renders nothing, and a nav entry that scrolls nowhere is worse
+    // than a missing one.
+    let people = &stats.people;
+    if people.known_members != 0 || people.silent_members != 0 {
+        links.insert(3, ("members", "Members"));
+    }
     let toc: String = links
         .iter()
         .map(|(anchor, title)| format!("<a href=\"#{anchor}\">{}</a>", esc(title)))

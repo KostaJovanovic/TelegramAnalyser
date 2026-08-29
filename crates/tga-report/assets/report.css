@@ -142,6 +142,24 @@ html.aliases .alias{display:inline}
 .presence svg{height:15px}
 td.name{min-width:186px}
 .role{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+/* The member list. `.handle` is monospaced because an @handle is an
+   identifier -- it gets read character by character when somebody is checking
+   whether two accounts are the same person, and a proportional font makes
+   `rn` and `m` the same shape. */
+.handle{
+  font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;color:var(--muted);
+}
+.muted{color:var(--muted)}
+.namelist{
+  list-style:none;padding:0;margin:12px 0 0;display:flex;flex-wrap:wrap;gap:6px 10px;
+}
+.namelist li{
+  border:1px solid var(--hairline);padding:3px 8px;font-size:12px;color:var(--fg);
+}
+.tagpill{
+  font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  border:1px solid var(--hairline);padding:1px 5px;margin-left:6px;white-space:nowrap;
+}
 tr.overflow{display:none}
 html.everyone tr.overflow{display:table-row}
 .datatoggle{

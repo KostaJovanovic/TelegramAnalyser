@@ -5,24 +5,30 @@
 //! that it runs on a fresh clone with no corpus and no drives, and that it names
 //! the character where an edit changed the output.
 //!
-//! The fixture is **synthetic**, and that is forced rather than chosen:
-//! `*.stats.json` is gitignored because a real dump is verbatim chat history
-//! from real people, so a golden cut from a real archive could not be committed
-//! at all. `fixture.stats.json` is hand-written to the shape
-//! `tga_metrics::analyse` returns, and it carries the awkward cases on purpose
-//! — a name with `&` and `<` in it, a person who never spoke, a two-day
-//! silence, an alias list, a non-ASCII topic name, a superlative whose value is
-//! a string rather than a count, and an export with no roster dates.
+//! **The fixture is generated from a real archive and then scrubbed** — see
+//! `tools/make_fixture.py`, which is the only thing that should ever write it.
+//! It was hand-written until it wasn't, and hand-written was worse in a way
+//! worth recording: every histogram in it was a number somebody invented and
+//! then made self-consistent, so it was flat and short-tailed. The quantile
+//! ramp exists *because* real chat activity is long-tailed, and the only
+//! fixture that exercised it was one no chat could have produced.
 //!
-//! **One value in it is deliberately not what the analyser would emit.** The
-//! `dynamics.answer.minimum` floor is 3 here and 20 in real life: on a
-//! 22-message fixture every hour is under 20, so the report would render only
-//! the "not enough replies" branch and leave the chart, the median column and
-//! the em-dash for a thin hour uncovered. The floor is a property of the
-//! recorded dump rather than of the writer, which is what makes it fair to vary
-//! — and two figures the fixture's seven-day archive genuinely cannot reach,
-//! a dormant person and a returning one, are covered by `lib.rs`'s own tests
-//! instead of by distorting it further.
+//! What it must not be is a real archive. `*.stats.json` is gitignored because
+//! a dump is verbatim history from real people, and this file is committed. So
+//! every display name, `@handle`, peer key and message snippet is replaced —
+//! including inside map *keys*, which is where that kind of scrub usually
+//! leaks — while every number, date and topic name survives untouched.
+//!
+//! On top of that the script injects the shapes a healthy export does not have
+//! and a renderer needs tested: a name carrying `&` and `<`, an alias list, a
+//! role that is not `member`, a roster the export admits is short, and one it
+//! says it truncated. Those are marked in `inject()` with why.
+//!
+//! Two branches came free with the real data that the old seven-day fixture
+//! could not reach at all — somebody fading out, and an hour with too few
+//! replies to time sitting beside one with enough. The second used to require
+//! lowering `dynamics.answer.minimum` from 20 to 3; the floor is the real one
+//! now.
 //!
 //! The fonts are **not** embedded in the golden. Three base64'd faces are
 //! ~270 KB of noise in a committed file and they are already covered by
@@ -52,12 +58,17 @@ fn here() -> PathBuf {
 /// Written here rather than read from a file: the events layer has its own
 /// tests in `tga-notes`, and what this fixture is for is the *markup* an event
 /// produces.
+///
+/// **The dates have to sit inside the archive's span**, which is 14 Dec 2025 to
+/// 26 Aug 2026. An event outside it lands off the end of the rail, where it
+/// draws nothing and pins nothing — the marker tests would then be asserting
+/// against a chart with no marks on it and would still pass.
 fn events() -> Vec<Event> {
     vec![
         Event {
             id: "migration".into(),
-            start: chrono::NaiveDate::from_ymd_opt(2025, 1, 2).unwrap(),
-            end: Some(chrono::NaiveDate::from_ymd_opt(2025, 1, 6).unwrap()),
+            start: chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(),
+            end: Some(chrono::NaiveDate::from_ymd_opt(2026, 1, 6).unwrap()),
             title: "Moved off the old group".into(),
             summary: "A span, with citations and a confidence.".into(),
             kind: "milestone".into(),
@@ -67,12 +78,12 @@ fn events() -> Vec<Event> {
             // The fields only the `_timeline` notes layout carries.
             time: "20:59".into(),
             weight: "major".into(),
-            who: vec!["Ana".into(), "Nobody At All".into()],
+            who: vec!["Person 2".into(), "Nobody At All".into()],
             tags: vec!["osnivanje".into(), "kanali".into()],
         },
         Event {
             id: "quiet".into(),
-            start: chrono::NaiveDate::from_ymd_opt(2025, 1, 7).unwrap(),
+            start: chrono::NaiveDate::from_ymd_opt(2026, 1, 7).unwrap(),
             end: None,
             title: "A moment, uncited & unsure".into(),
             summary: String::new(),
@@ -94,7 +105,7 @@ fn events() -> Vec<Event> {
         // absence rather than the feature.
         Event {
             id: "split".into(),
-            start: chrono::NaiveDate::from_ymd_opt(2025, 1, 3).unwrap(),
+            start: chrono::NaiveDate::from_ymd_opt(2026, 1, 3).unwrap(),
             end: None,
             title: "An argument".into(),
             summary: "A second kind, so the filters have something to choose between.".into(),
@@ -114,10 +125,10 @@ fn notes() -> Notes {
     Notes {
         events: events(),
         coverage: Some(Coverage {
-            from: chrono::NaiveDate::from_ymd_opt(2025, 1, 1),
-            to: chrono::NaiveDate::from_ymd_opt(2025, 1, 4),
+            from: chrono::NaiveDate::from_ymd_opt(2025, 12, 14),
+            to: chrono::NaiveDate::from_ymd_opt(2026, 1, 31),
             level: "turning points".into(),
-            note: "Only the first four days were read.".into(),
+            note: "Only the first seven weeks were read.".into(),
         }),
         source: "events.json, written by a test".into(),
     }
@@ -227,32 +238,55 @@ fn the_golden_exercises_the_cases_it_was_built_for() {
     // A golden is only worth its bytes if it covers the awkward shapes. This
     // fails if the fixture is ever trimmed down to something tidy.
     let html = rendered();
+    let mut missing: Vec<String> = Vec::new();
     for (what, needle) in [
         ("an escaped name", "Bob &amp; Co &lt;the second&gt;"),
         ("an alias list", "class=\"alias\">was Bobby, B."),
         ("a non-member role", "class=\"role\">creator"),
         ("the overflow-free people table", "class=\"rank\">1<"),
+        // -- the member list ------------------------------------------------
         (
             "a silent member",
-            "1 of the 3 people on the member list never posted",
+            "2 of the 43 people on the member list never posted",
         ),
         (
             "an incomplete roster",
-            "member list in this export is incomplete",
+            "export says this member list is incomplete",
         ),
+        ("a capped roster", "stopped collecting members"),
+        (
+            "people who talked but are not listed",
+            "are not on the member list at all",
+        ),
+        ("a handle", "class=\"handle\">@handle_1"),
+        ("a member with no handle", "class=\"muted\">no handle"),
+        ("a member who never posted", "class=\"muted\">never posted"),
         ("a non-ASCII topic", "ćaskanje"),
-        ("a string-valued superlative", "class=\"big\">1.4 MB<"),
+        // -- per-topic figures ----------------------------------------------
+        ("a topic's own busiest day", "class=\"at\">18 Aug 2026"),
+        ("the per-topic clock", "<h3>When each topic is awake</h3>"),
+        (
+            "a cell scaled to its own row",
+            "157 of 642 at this row's peak",
+        ),
+        ("a string-valued superlative", "class=\"big\">47.1 MB<"),
         ("a spanning event", "ev-span"),
         // `ev k1 conf-low`: the shape class sits between the two, so match the
         // part that is the actual claim.
         ("a low-confidence event", "conf-low"),
         ("a shape-coded marker", "class=\"ev k0"),
-        ("the coverage prose", "Only the first four days were read."),
+        (
+            "the coverage prose",
+            "Only the first seven weeks were read.",
+        ),
         (
             "a name that matches nobody",
             "class=\"unknown\">Nobody At All",
         ),
-        ("a name that does match", "class=\"who\"><span>Ana</span>"),
+        (
+            "a name that does match",
+            "class=\"who\"><span>Person 2</span>",
+        ),
         ("the weight", "class=\"w w-major\""),
         ("the time of day", "class=\"at\">20:59"),
         ("a tag", "class=\"tags\"><span>osnivanje"),
@@ -260,45 +294,58 @@ fn the_golden_exercises_the_cases_it_was_built_for() {
         ("an event with no summary", "No summary."),
         (
             "the hidden-node note",
-            "The 1 least-connected people are left out",
+            "The 16 least-connected people are left out",
         ),
-        ("orphan replies", "1 replies point at a message"),
-        ("an export with no roster dates", "carries no member list"),
-        ("skipped media", "1 of those attachments were over the"),
+        ("orphan replies", "11 replies point at a message"),
+        (
+            "an export with no roster dates",
+            "carries no member list, so arrivals cannot be dated",
+        ),
+        ("skipped media", "of those attachments were over the"),
         ("a quantile caption", "Five shades, one per fifth"),
         (
             "the streak",
-            "Longest unbroken run of days posted on: Ana, 3 days",
+            "Longest unbroken run of days posted on: Bob &amp; Co &lt;the second&gt;, 9 days",
         ),
         // -- the `dynamics` branch ------------------------------------------
         //
-        // The fixture lowers `answer.minimum` to 3 on purpose. The real figure
-        // is 20, which on a 22-message fixture would leave every hour under the
-        // floor and render only the "not enough replies" branch — so the chart,
-        // the median column and the em-dash for a thin hour would all go
-        // uncovered. Lowering the floor is a property of the recorded dump, not
-        // of the writer, which is what makes it a fair thing to vary here.
+        // These used to need a doctored `answer.minimum` of 3: on a 22-message
+        // hand-written fixture every hour fell under the real floor of 20, so
+        // only the "not enough replies" branch rendered. A 6,687-message
+        // archive clears the floor in some hours and not others, which is the
+        // shape the code was written for — the floor is the real one now, and
+        // both branches below come from it rather than from a distortion.
         (
             "a correspondent pair",
-            "Ana &amp; Bob &amp; Co &lt;the second&gt;",
+            "Bob &amp; Co &lt;the second&gt; &amp; Person 4",
         ),
-        ("both directions of a pair", "5 \u{2194} 3"),
+        ("both directions of a pair", "13 \u{2194} 10"),
         ("an hour that met the floor", "<td>2 min</td>"),
         ("an hour that did not", "<td>&#8212;</td>"),
         ("the chain-length buckets", " chains\""),
-        // The heading rather than a bar: the fixture is a single month, so
-        // `returning` is 0 by construction — nobody can come back in the first
-        // month — and `columns` draws no rect for a zero. That absence is the
-        // correct rendering and the chart is still there around it.
         ("the month-over-month chart", "<h3>Who came back</h3>"),
-        ("nobody having gone quiet", "posted one in its last month"),
+        // Nine months of real archive reaches both of these. The old fixture
+        // covered seven days, in which nobody *can* fade or leave, so they were
+        // pushed out to unit tests in `lib.rs`; the golden carries them now.
+        ("somebody fading out", "<td>fading</td>"),
         (
             "dormancy measured against the archive",
-            "7 Jan 2025, the last day",
+            "26 Aug 2026, the last day in this archive",
         ),
     ] {
-        assert!(html.contains(needle), "the golden lost {what}: {needle:?}");
+        if !html.contains(needle) {
+            missing.push(format!("  {what}: {needle:?}"));
+        }
     }
+    // Collected rather than asserted one at a time. Regenerating the fixture
+    // moves many of these at once, and a test that stops at the first miss
+    // turns one edit into a dozen rebuild-and-look-again rounds.
+    assert!(
+        missing.is_empty(),
+        "the golden lost {} of the cases it was built for:\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
 }
 
 #[test]

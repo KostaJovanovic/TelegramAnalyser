@@ -136,11 +136,14 @@ pub fn render(stats: &Stats, names: &Names, notes: &Notes, options: &Options) ->
     let title = format!("{} — archive report", stats.export.name);
 
     let body = format!(
-        "{}{}{}{}{}{}{}{}{}</section>{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}</section>{}{}{}",
         sections::masthead(stats),
         sections::timeline(stats, notes, names),
         sections::rhythm(stats),
         sections::people(stats),
+        // Straight after the people table, because it answers the question that
+        // table provokes: these are the ones who talked, so who else is here?
+        sections::members(stats),
         sections::conversation(stats, names),
         sections::between(stats),
         sections::said(stats),

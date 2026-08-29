@@ -216,11 +216,20 @@ pub struct Gap {
 /// Telegram names at most three reactors per message and never names an
 /// anonymous one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct People {
     pub rows: Vec<Person>,
     pub speakers: usize,
     pub known_members: usize,
     pub roster_complete: Option<bool>,
+    /// The exporter stopped collecting members before it ran out of them.
+    /// Distinct from `roster_complete`; see `tga_read::Export`.
+    pub roster_capped: Option<bool>,
+    /// People with a roster entry who also posted — the overlap, which is the
+    /// number that says whether the member list and the history describe the
+    /// same group. A roster of 43 against 45 speakers sounds like a match until
+    /// you notice only 41 appear in both.
+    pub members_who_spoke: usize,
     pub silent_members: usize,
     pub total_messages: usize,
     /// What share of the conversation the loudest three carry. One number for
@@ -232,12 +241,38 @@ pub struct People {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Person {
     pub key: String,
     pub name: String,
     pub aliases: Vec<String>,
     pub role: String,
     pub joined: Option<String>,
+    /// The `@handle`, from the member list, without the `@`.
+    ///
+    /// The only stable identifier a reader can act on: a display name changes
+    /// whenever its owner feels like it — this archive has 11 people who
+    /// renamed themselves — and the peer key is a number that means nothing to
+    /// anybody. Skipped when empty, which is most people in an export with no
+    /// member list.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub username: String,
+    /// Telegram says this account is a bot.
+    ///
+    /// Worth separating because a bot on the member list is not a person who
+    /// chose not to speak, and lumping the two together makes the silence look
+    /// more sociable than it was.
+    #[serde(skip_serializing_if = "is_false")]
+    pub bot: bool,
+    /// This person has a row in `participants.json`.
+    ///
+    /// Recorded rather than inferred. The obvious proxies are both wrong: a
+    /// member may have no `@handle` (two of UA KOLAB's 43 have never set one)
+    /// and `silent` is only true for a member who *also* never appears in the
+    /// history. Deriving membership from either quietly drops real members from
+    /// the one table whose job is to be complete.
+    #[serde(skip_serializing_if = "is_false")]
+    pub listed: bool,
     pub messages: i64,
     pub words: i64,
     pub chars: i64,
@@ -260,7 +295,7 @@ pub struct Person {
     /// a roster row rather than a field every person has. In a group of 43 with
     /// 18 lurkers, "43 members" and "25 people talked" are both true and only
     /// one of them describes the conversation.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(skip_serializing_if = "is_false")]
     pub silent: bool,
 }
 
@@ -429,7 +464,11 @@ pub struct Link {
 // topics, records, arrivals
 // ---------------------------------------------------------------------------
 
+/// `#[serde(default)]` because this struct grows: a dump recorded before a
+/// column existed must still render, with the new cell empty rather than the
+/// whole load failing. The same reasoning as on `Stats` itself, one level down.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Topic {
     pub index: usize,
     pub name: String,
@@ -438,7 +477,7 @@ pub struct Topic {
     pub words: i64,
     /// Absent on a topic nobody posted in — there is no average of nothing,
     /// and zero would read as "they wrote empty messages".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub avg_words: Option<f64>,
     pub media: usize,
     pub replies: usize,
@@ -446,6 +485,28 @@ pub struct Topic {
     pub first: String,
     pub last: String,
     pub top: String,
+    /// Days this topic carried at least one message.
+    ///
+    /// Not derivable from `first` and `last`, and the difference is the whole
+    /// point: a topic open for 278 days and posted in on 12 of them is a
+    /// different animal from one posted in daily, and the two look identical
+    /// in a date range.
+    pub active_days: usize,
+    /// This topic's own loudest day.
+    ///
+    /// Deliberately not the archive's busiest day cut to this topic — the
+    /// archive's peak is usually one topic's spike, and reporting it on every
+    /// row would say the same thing ten times and tell you nothing about nine
+    /// of them.
+    pub busiest: Busiest,
+    /// Hour of day, this topic alone, on `Msg::when` like every other clock
+    /// face.
+    ///
+    /// The report scales each row to its own maximum rather than to a shared
+    /// one, so the rows compare by *shape*. That is the only way a
+    /// 1,527-message topic and a 139,743-message one can be read on one grid:
+    /// on a shared scale the small one is a row of black and says nothing.
+    pub per_hour: [i64; 24],
 }
 
 /// A record, and the message that backs it.

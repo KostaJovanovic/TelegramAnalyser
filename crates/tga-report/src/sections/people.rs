@@ -78,20 +78,28 @@ pub fn people(stats: &Stats) -> String {
         )
     };
 
-    let mut silent = String::new();
-    if folk.silent_members != 0 {
-        silent = format!(
-            "<p class=\"note\">{} of the {} people on the member list never posted, \
-             so they appear nowhere above.</p>",
-            folk.silent_members, folk.known_members
-        );
-    }
-    if folk.roster_complete == Some(false) {
-        silent.push_str(
-            "<p class=\"note\">The member list in this export is incomplete, \
-             so the count of people who never posted is a floor.</p>",
-        );
-    }
+    // Who never posted, and how short the member list is, both belong to the
+    // Members section below -- which is where the roster is actually rendered.
+    // This used to say "N of the 0 people on the member list never posted" on
+    // any export without a `participants.json`, which is both arithmetic
+    // nonsense and wrong about where those people came from: with no roster
+    // they are reactors and joiners picked out of the history. Both real
+    // archives hit that branch.
+    let silent = if folk.silent_members == 0 {
+        String::new()
+    } else {
+        format!(
+            "<p class=\"note\">{} more {} in this archive without ever posting, \
+             so they are not in the table above &#8212; see \
+             <a href=\"#members\">Members</a>.</p>",
+            folk.silent_members,
+            if folk.silent_members == 1 {
+                "person appears"
+            } else {
+                "people appear"
+            }
+        )
+    };
 
     let awards = if stats.awards.is_empty() {
         String::new()

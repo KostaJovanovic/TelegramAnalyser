@@ -41,6 +41,11 @@ struct Row {
     by_topic: HashMap<usize, i64>,
     hours: [i64; 24],
     silent: bool,
+    /// All three come from the member list and from nowhere else — a message
+    /// never carries the sender's handle, only their display name at the time.
+    username: String,
+    bot: bool,
+    listed: bool,
 }
 
 impl Row {
@@ -82,6 +87,9 @@ impl Row {
             // Only ever set on a row that came from the member list, and it is
             // skipped when false rather than written -- see `Person`.
             silent: self.silent,
+            username: self.username,
+            bot: self.bot,
+            listed: self.listed,
         }
     }
 }
@@ -169,6 +177,17 @@ pub fn compute(export: &Export, people: &People) -> PeopleStats {
         }
     }
 
+    // The handle and the bot flag exist only on the member list -- a message
+    // carries the sender's display name at the time and never their `@handle`.
+    // Stamped after the loop above so a roster entry for somebody who *did*
+    // post lands on their existing row rather than making a second one.
+    for member in &export.roster {
+        let row = row!(member.key.clone());
+        row.username = member.username.clone();
+        row.bot = member.bot;
+        row.listed = true;
+    }
+
     let mut ranked: Vec<Row> = order
         .iter()
         .map(|key| rows.remove(key).expect("row exists"))
@@ -181,6 +200,19 @@ pub fn compute(export: &Export, people: &People) -> PeopleStats {
 
     let speakers: Vec<&Row> = ranked.iter().filter(|r| r.messages > 0).collect();
     let speaker_count = speakers.len();
+    // The overlap between the member list and the history, counted against the
+    // roster rather than against the rows so a key listed twice cannot inflate
+    // it. This is the number that says whether the two describe the same group.
+    let members_who_spoke = {
+        let spoke: std::collections::HashSet<&str> =
+            speakers.iter().map(|r| r.key.as_str()).collect();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        export
+            .roster
+            .iter()
+            .filter(|m| seen.insert(m.key.as_str()) && spoke.contains(m.key.as_str()))
+            .count()
+    };
     let silent_members = ranked.iter().filter(|r| r.messages == 0).count();
     // What share of the conversation the loudest few carry. A single number
     // for "is this a group or a broadcast".
@@ -201,6 +233,8 @@ pub fn compute(export: &Export, people: &People) -> PeopleStats {
         speakers: speaker_count,
         known_members: export.roster.len(),
         roster_complete: export.roster_complete,
+        roster_capped: export.roster_capped,
+        members_who_spoke,
         silent_members,
         total_messages: total,
         top3_share,

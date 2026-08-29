@@ -73,6 +73,88 @@ pub fn heatgrid(
     frame(width, height, &parts, "heat", "")
 }
 
+/// The same grid, but **each row scaled to its own maximum**.
+///
+/// Separate from [`heatgrid`] rather than a flag on it, because the two answer
+/// different questions and mixing them silently would be the worst of both. A
+/// shared scale answers "where in the archive is the noise", which is right for
+/// weekday-against-hour where every cell is drawn from the same pile. Rows of
+/// wildly different size need the other question — "what shape is *this* row's
+/// day" — and a shared scale cannot ask it: in the reference archive the
+/// largest topic carries 139,743 messages and the smallest 488, so on one scale
+/// nine of the ten rows are solid track and the grid says only that General is
+/// big, which the row of numbers beside it already said.
+///
+/// The cost is stated rather than hidden: a shade means *this row's* rank, so
+/// two rows are comparable by profile and **not** by colour. The caller prints
+/// that under the chart, and every cell keeps its real count in the tooltip.
+pub fn heatrows(
+    row_labels: &[String],
+    col_labels: &[String],
+    cells: &[Vec<i64>],
+    width: f64,
+    cell: f64,
+    gutter: f64,
+) -> String {
+    if cells.is_empty() {
+        return frame(width, cell, "", "", "");
+    }
+    let cols = cells[0].len();
+    let size = cell.min((width - gutter) / cols as f64 - BAR_GAP);
+    let height = cells.len() as f64 * (size + BAR_GAP) + 18.0;
+
+    let mut parts = String::new();
+    for (r, row) in cells.iter().enumerate() {
+        // Built from this row alone. An all-zero row yields no edges and every
+        // cell lands on the track, which is the honest drawing of a topic
+        // nobody posted in -- not a row of the palest shade, which would read
+        // as "quiet but alive".
+        let scale = Quantiles::new(row.iter().copied());
+        let y = r as f64 * (size + BAR_GAP);
+        let _ = write!(
+            parts,
+            "<text class=\"rowlabel\" x=\"{}\" y=\"{}\" text-anchor=\"end\">{}</text>",
+            num(gutter - 10.0),
+            num(y + size / 2.0 + 4.0),
+            esc(&row_labels[r])
+        );
+        for (c, value) in row.iter().enumerate() {
+            let x = gutter + c as f64 * (size + BAR_GAP);
+            // The row's own peak rides along in the tooltip. Without it a
+            // reader comparing two bright cells has no way to learn that one is
+            // 4,815 messages and the other is 32.
+            let _ = write!(
+                parts,
+                "<rect class=\"cell\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" \
+                 fill=\"{}\" data-tip=\"{} {} &#183; {} of {} at this row's peak\"/>",
+                num(x),
+                num(y),
+                num(size),
+                num(size),
+                scale.var(*value),
+                esc(&row_labels[r]),
+                esc(&col_labels[c]),
+                thousands(*value),
+                thousands(scale.top)
+            );
+        }
+    }
+    for (c, label) in col_labels.iter().enumerate() {
+        if c % 3 != 0 {
+            continue;
+        }
+        let x = gutter + c as f64 * (size + BAR_GAP) + size / 2.0;
+        let _ = write!(
+            parts,
+            "<text class=\"axis\" x=\"{}\" y=\"{}\" text-anchor=\"middle\">{}</text>",
+            num(x),
+            num(height - 4.0),
+            esc(label)
+        );
+    }
+    frame(width, height, &parts, "heat", "")
+}
+
 /// One square per day, weeks as columns, running continuously.
 ///
 /// Not split into a block per year. A year block is the shape everyone knows

@@ -91,6 +91,19 @@ pub struct Member {
     pub name: String,
     pub role: String,
     pub joined: Option<NaiveDateTime>,
+    /// The `@handle`, without the `@`. Empty when the account has none, which
+    /// is ordinary — two of UA KOLAB's 43 members have never set one.
+    ///
+    /// Worth carrying because it is the only *stable* thing about a person: a
+    /// display name changes whenever they feel like it and the numeric key
+    /// means nothing to a reader, so the handle is what lets somebody looking
+    /// at the report recognise who they are looking at.
+    pub username: String,
+    /// Whether Telegram says this account is a bot.
+    ///
+    /// A bot on the member list is not a person who never spoke, and counting
+    /// it among them makes the silence look more sociable than it was.
+    pub bot: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +130,14 @@ pub struct Export {
     /// `None` when the export wrote no roster at all, which is a different
     /// thing from a roster it knows is short.
     pub roster_complete: Option<bool>,
+    /// The exporter's own `capped` flag: it stopped collecting members before
+    /// it ran out of them.
+    ///
+    /// Kept apart from `roster_complete` rather than folded into it, because
+    /// the two say different things about *why* a list is short — one is "I
+    /// know I missed some", the other is "I stopped at a limit" — and the
+    /// report can only pass that on if it still has both.
+    pub roster_capped: Option<bool>,
     pub members_count: Option<i64>,
 }
 
@@ -498,17 +519,17 @@ pub fn one(raw: &Value, topic: usize, root: Option<i64>) -> Option<Msg> {
 // the roster
 // ---------------------------------------------------------------------------
 
-fn roster(root: &Path) -> (Vec<Member>, Option<bool>) {
+fn roster(root: &Path) -> (Vec<Member>, Option<bool>, Option<bool>) {
     let path = root.join("participants.json");
     if !path.is_file() {
-        return (Vec::new(), None);
+        return (Vec::new(), None, None);
     }
     let body: Value = match std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
     {
         Some(body) => body,
-        None => return (Vec::new(), None),
+        None => return (Vec::new(), None, None),
     };
 
     let mut people = Vec::new();
@@ -530,6 +551,13 @@ fn roster(root: &Path) -> (Vec<Member>, Option<bool>) {
                 name: as_text(entry.get("name")),
                 role,
                 joined: as_dt(entry.get("joined")),
+                // Written with no `@` by the exporter; strip one anyway, so a
+                // hand-edited file that added it does not end up rendering
+                // `@@name`.
+                username: as_text(entry.get("username"))
+                    .trim_start_matches('@')
+                    .to_string(),
+                bot: entry.get("bot") == Some(&Value::Bool(true)),
             });
         }
     }
@@ -537,11 +565,11 @@ fn roster(root: &Path) -> (Vec<Member>, Option<bool>) {
     // `complete` absent is not the same as `complete: false`. A roster the
     // export never wrote and a roster it knows is short look identical
     // downstream unless this distinction survives.
-    let complete = match body.get("complete") {
+    let flag = |name: &str| match body.get(name) {
         None | Some(Value::Null) => None,
         Some(v) => Some(v != &Value::Bool(false) && v != &serde_json::json!(0)),
     };
-    (people, complete)
+    (people, flag("complete"), flag("capped"))
 }
 
 // ---------------------------------------------------------------------------
@@ -572,7 +600,7 @@ pub fn load(root: &Path, mut progress: Option<Progress<'_>>) -> Result<Export> {
             .unwrap_or_default(),
         ..Default::default()
     };
-    (export.roster, export.roster_complete) = roster(root);
+    (export.roster, export.roster_complete, export.roster_capped) = roster(root);
 
     let total = files.len();
     for (index, path) in files.iter().enumerate() {

@@ -7,9 +7,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, Timelike};
 use tga_read::{Export, Msg};
-use tga_stats::{Activity, Award, Churn, ChurnEvent, Figure, Person, Streak, Superlative, Topic};
+use tga_stats::{
+    Activity, Award, Busiest, Churn, ChurnEvent, Figure, Person, Streak, Superlative, Topic,
+};
 
 use crate::identity::People;
 use crate::util::{round1, stamp_minutes, Counter};
@@ -395,14 +397,34 @@ pub fn topics(export: &Export, people: &People) -> Vec<Topic> {
             continue;
         }
         let mut voices: Counter<String> = Counter::new();
+        let mut per_hour = [0i64; 24];
+        let mut per_day: HashMap<NaiveDate, i64> = HashMap::new();
         for msg in &stream {
             let key = people.key_of(msg);
             if !key.is_empty() {
                 voices.bump(key);
             }
+            per_hour[msg.when.hour() as usize] += 1;
+            *per_day.entry(msg.when.date()).or_default() += 1;
         }
+        // Ties go to the earlier day. `max_by_key` keeps the *last* maximum,
+        // so the sort is explicit rather than left to the iterator: two days
+        // with the same count are a coin toss, and a coin toss that changes
+        // between runs would fail the baseline for no reason.
+        let busiest = {
+            let mut days: Vec<(&NaiveDate, &i64)> = per_day.iter().collect();
+            days.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+            days.first()
+                .map_or_else(Busiest::default, |(day, n)| Busiest {
+                    date: day.to_string(),
+                    messages: **n,
+                })
+        };
         let words: i64 = stream.iter().map(|m| m.words as i64).sum();
         out.push(Topic {
+            active_days: per_day.len(),
+            busiest,
+            per_hour,
             index: topic.index,
             name: topic.name.clone(),
             messages: stream.len(),
