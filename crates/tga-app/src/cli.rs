@@ -1,7 +1,15 @@
-//! `tga <export folder> [options]`
+//! `TelegramAnalyser.exe <export folder> [options]` — the window's other half.
 //!
 //! Point it at a finished export and it writes one `report.html` beside it;
 //! nothing here reaches the network.
+//!
+//! **This used to be a second executable, `tga.exe`.** One program that ships
+//! as two files is two things to copy, two to sign and two to keep in step, for
+//! a difference that is entirely in how it was launched. So the argv decides
+//! instead: arguments mean do the work and print, none means open the window.
+//! Every option below behaves exactly as it did when it had its own exe, which
+//! is what lets `save.bat baseline` keep comparing byte for byte across the
+//! change.
 
 use std::path::{Path, PathBuf};
 
@@ -10,8 +18,10 @@ use anyhow::{bail, Result};
 const USAGE: &str = "\
 Telegram Export Analyser
 
-    tga <export folder> [options]
-    tga --from-stats <stats.json> --out <report.html> [options]
+    TelegramAnalyser <export folder> [options]
+    TelegramAnalyser --from-stats <stats.json> --out <report.html> [options]
+
+    With no arguments at all, the window opens instead.
 
 Options
     --out PATH        where to write the report (default: report.html in the
@@ -37,9 +47,10 @@ Options
     --quiet           no per-file progress
 ";
 
-fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+/// Run as a command. `args` is argv with the program name already dropped, and
+/// is never empty — an empty argv opens the window and never reaches here.
+pub fn run(args: Vec<String>) -> Result<()> {
+    if args[0] == "--help" || args[0] == "-h" {
         print!("{USAGE}");
         return Ok(());
     }
@@ -225,7 +236,13 @@ fn main() -> Result<()> {
 /// not depend on `tga-read` — it carries the `Event` type that `tga-report`
 /// renders, and `tga-report` must not reach the reader. Four lines is the whole
 /// price of the rule.
-fn digest_rows(export: &tga_read::Export, people: &tga_metrics::People) -> Vec<tga_notes::Row> {
+///
+/// `pub(crate)` because the window writes digests too; it used to keep its own
+/// identical copy, which is what two crates cost and one does not.
+pub(crate) fn digest_rows(
+    export: &tga_read::Export,
+    people: &tga_metrics::People,
+) -> Vec<tga_notes::Row> {
     export
         .msgs
         .iter()

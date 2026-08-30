@@ -169,40 +169,10 @@ fn write_report(out: &Path, html: &str) -> std::io::Result<()> {
     std::fs::write(out, html)
 }
 
-/// The digest's view of the export.
-///
-/// The same mapping `tga-cli` does, and it lives on this side of the layering
-/// for the same reason: `tga-notes` must not depend on `tga-read`, because it
-/// carries the `Event` type that `tga-report` renders.
-fn digest_rows(export: &tga_read::Export, people: &tga_metrics::People) -> Vec<tga_notes::Row> {
-    export
-        .msgs
-        .iter()
-        .map(|msg| tga_notes::Row {
-            id: msg.id,
-            t: msg.when.format("%Y-%m-%d %H:%M").to_string(),
-            topic: msg.topic,
-            who: if msg.sender.is_empty() && msg.name.is_empty() {
-                String::new()
-            } else {
-                people.name_of(&people.key_of(msg))
-            },
-            service: if msg.service {
-                Some(msg.action.clone())
-            } else {
-                None
-            },
-            text: tga_notes::digest::squeeze(&msg.text),
-            re: msg.reply_to,
-            media: msg.media.clone(),
-            reactions: if msg.reactions.is_empty() {
-                None
-            } else {
-                Some(msg.reaction_total())
-            },
-        })
-        .collect()
-}
+// `digest_rows` used to be duplicated here, character for character, because
+// the window and the command line were separate crates and neither could reach
+// into the other. They are one crate now, so there is one copy, in `cli`.
+use crate::cli::digest_rows;
 
 #[cfg(test)]
 mod tests {

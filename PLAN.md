@@ -58,8 +58,8 @@ tga-stats     the shape of every figure, and the dump's format. Data only.
 tga-metrics   every figure, one pass over the export. No I/O.
 tga-report    the ramp, the SVG marks, and the one HTML file.
               MUST NOT depend on tga-read or tga-metrics.
-tga-cli       the `tga` binary.
-tga-app       the window, in egui. TelegramAnalyser.exe.
+tga-app       TelegramAnalyser.exe, the only binary. Arguments run the
+              analyser and print; no arguments open the window, in egui.
 ```
 
 **The `tga-report` rule is the one that pays for itself.** The writer renders
@@ -75,8 +75,8 @@ and reaches nothing.
 **`tga-notes` inherits the rule at one remove.** It carries the `Event` type
 that `tga-report` renders, so a dependency on the reader there would reach
 `tga-report` transitively. `write_digest` therefore takes a plain `digest::Row`
-and the caller does the mapping from `Export` — four lines, in `tga-cli` and in
-`tga-app`, and the only price the rule charges anywhere.
+and the caller does the mapping from `Export` — four lines, in
+`tga-app/src/cli.rs`, and the only price the rule charges anywhere.
 
 ## The three rules that change numbers
 

@@ -750,7 +750,7 @@ pub struct Deepest {
 /// sorts on its own — but its `preserve_order` feature swaps in an `IndexMap`,
 /// and cargo unifies features across everything built in one invocation. The
 /// window's toolkit turned that feature on somewhere in its tree, so
-/// `cargo build -p tga-cli` and `cargo build` (which also builds the window)
+/// building one crate alone and building the whole workspace
 /// produced *differently ordered dumps from the same numbers*, and only one of
 /// them matched the recorded baseline. Sorting explicitly makes the file the
 /// same file however the binary that wrote it was built, and keeps it that way

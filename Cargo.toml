@@ -6,7 +6,6 @@ members = [
     "crates/tga-stats",
     "crates/tga-metrics",
     "crates/tga-report",
-    "crates/tga-cli",
     "crates/tga-app",
 ]
 

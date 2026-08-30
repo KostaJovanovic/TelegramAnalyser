@@ -1,6 +1,10 @@
 //! The Telegram export analyser.
 //!
-//! `tga` is the same program with the window taken off.
+//! **One executable, two front ends.** Run it with arguments and it behaves as
+//! the old `tga.exe` did — read an export, write a report, print what it found.
+//! Run it with none and the window opens. There was never a difference between
+//! the two beyond how they were launched, and shipping that difference as a
+//! second file meant two things to copy and keep in step.
 
 // **A release build is a GUI binary, so double-clicking it does not open a
 // console window behind the app.** Without this the exe defaults to the console
@@ -12,6 +16,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod cli;
 mod job;
 mod open;
 mod state;
@@ -62,7 +67,49 @@ fn panic_message(window_opened: bool, panic: &str) -> String {
     }
 }
 
+/// Borrow the console of whatever launched us, if there was one.
+///
+/// **A release build is a GUI-subsystem binary, and a GUI binary starts with no
+/// stdout at all** — so `println!` from the command half would write into
+/// nothing and the program would look like it had silently done nothing. Windows
+/// hands the parent's console over on request, and `AttachConsole` is that
+/// request. It fails when there is no parent console (double-clicked, or piped),
+/// and failing is fine: the output goes where it was already going.
+///
+/// This is the whole price of shipping one executable instead of two, and it is
+/// paid once, here.
+#[cfg(windows)]
+fn attach_parent_console() {
+    // Declared rather than pulled in with the `windows` crate: one FFI line
+    // against a stable kernel32 export does not need a dependency tree.
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    extern "system" {
+        fn AttachConsole(dwProcessId: u32) -> i32;
+    }
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}
+
 fn main() {
+    // **Arguments mean the command, none means the window.** This used to be
+    // two executables; the only difference between them was ever how they were
+    // started, which is a thing argv already records.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        attach_parent_console();
+        if let Err(e) = cli::run(args) {
+            // `{e:#}` so anyhow's context chain prints, not just the outermost
+            // message -- "Not a folder" without the path it tried is no help.
+            eprintln!("error: {e:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     std::panic::set_hook(Box::new(|info| {
         use std::sync::atomic::Ordering;
         let message = panic_message(WINDOW_OPENED.load(Ordering::Relaxed), &info.to_string());

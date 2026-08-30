@@ -2,9 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Point `tga` at a finished Telegram export folder and it writes one
-self-contained `report.html` beside it. `TelegramAnalyser.exe` is the same
-program with a window on it.
+Point `TelegramAnalyser.exe` at a finished Telegram export folder and it writes
+one self-contained `report.html` beside it. Run it with no arguments and the
+same program opens a window instead.
+
+**One executable.** It shipped as two — the window, and `tga.exe` for the
+command line — until the only difference between them turned out to be how they
+were launched, which argv already records.
 
 **Read `PLAN.md` first.** It is the record of why each figure is computed the
 way it is, and of the decisions that would otherwise be re-litigated every time
@@ -34,9 +38,9 @@ cargo test -p tga-report --test golden     # the golden; no corpus needed
 cargo test -p tga-read   --test corpus     # the reader against a real export
 cargo test --all -- --nocapture            # --nocapture matters; see below
 
-cargo run -p tga-cli --bin tga -- <folder> [--out P] [--digest] [--no-fonts]
-                                           [--stats P] [--notes P] [--stamp T]
-cargo run -p tga-cli --bin tga -- --from-stats <stats.json> --out <report.html>
+cargo run -p tga-app --bin TelegramAnalyser -- <folder>
+        [--out P] [--digest] [--no-fonts] [--stats P] [--notes P] [--stamp T]
+cargo run -p tga-app --bin TelegramAnalyser -- --from-stats <s.json> --out <p>
 ```
 
 - **`TGA_REQUIRE_CORPUS=1`** (which `save.bat` sets) turns a missing corpus into
@@ -59,9 +63,10 @@ tga-stats     the shape of every figure, and the dump's format. Data only.
 tga-metrics   every figure, one pass. No I/O. Fills in a tga_stats::Stats.
 tga-report    the ramp, the SVG marks, the one HTML file. Reads a Stats.
               MUST NOT depend on tga-read or tga-metrics.
-tga-cli       the `tga` binary.
-tga-app       the window, TelegramAnalyser.exe. egui; state.rs holds every rule
-              it applies, with no toolkit in it, so they stay testable.
+tga-app       the only binary, TelegramAnalyser.exe. cli.rs is the argument
+              half; app.rs is the window, egui on glow; state.rs holds every
+              rule the window applies, with no toolkit in it, so they stay
+              testable.
 ```
 
 `tga-report` renders from a `tga_stats::Stats`, which is exactly what `--stats`
@@ -71,7 +76,7 @@ shape lives in `tga-stats` rather than in either side**, so the writer can read
 it without depending on the reader or the metrics, and the compiler checks every
 field name. `tga-notes` inherits the rule at one remove because it carries the
 `Event` type `tga-report` renders; the `Export -> digest::Row` mapping therefore
-lives in the *callers* (`tga-cli/src/main.rs`, `tga-app`).
+lives in the *caller* (`tga-app/src/cli.rs`).
 
 Every field of `Stats` has a `Default` and the struct is `#[serde(default)]`, so
 a dump with a branch missing renders an empty section rather than failing to
@@ -92,9 +97,9 @@ nothing in it.
 - **The stats dump is sorted by `tga_stats::write`, not by the map type.**
   `serde_json`'s object is a `BTreeMap` and sorts itself — until something turns
   on its `preserve_order` feature, and cargo unifies features across everything
-  built in one invocation. The window's old toolkit turned it on, so
-  `cargo build -p tga-cli` and `cargo build` produced differently ordered dumps
-  from the same numbers. The sort is explicit now; do not remove it on the
+  built in one invocation. The window's old toolkit turned it on, so building
+  the command-line binary alone and building the workspace produced differently
+  ordered dumps from the same numbers. The sort is explicit now; do not remove it on the
   grounds that BTreeMap already does it, and do not assume the current
   dependency set is the last one that will reach for that feature.
 - **`assets/report.css` and `assets/report.js` are copied into the report

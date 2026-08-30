@@ -2379,19 +2379,6 @@ dependencies = [
  "anyhow",
  "eframe",
  "rfd",
- "tga-metrics",
- "tga-notes",
- "tga-read",
- "tga-report",
- "tga-stats",
-]
-
-[[package]]
-name = "tga-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
  "serde_json",
  "tga-metrics",
  "tga-notes",

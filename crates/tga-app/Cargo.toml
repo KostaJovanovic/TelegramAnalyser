@@ -33,3 +33,6 @@ eframe = { version = "0.33", default-features = false, features = ["glow"] }
 rfd = "0.16"
 
 anyhow = { workspace = true }
+
+# The command half reads a recorded --stats dump straight back into a `Stats`.
+serde_json.workspace = true

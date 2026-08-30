@@ -27,11 +27,10 @@ set "KRGMEXPORT="
 for /d %%d in ("J:\temp pureraw\KRGM*") do set "KRGMEXPORT=%%~fd"
 if not defined KRGMEXPORT set "KRGMEXPORT=J:\temp pureraw\KRGM (not mounted)"
 
-rem What gets built, and what `build` kills before it tries to overwrite them.
-rem Two binaries from one `cargo build --release`: the window and the same
-rem program with the window taken off.
+rem What gets built, and what `build` kills before it tries to overwrite it.
+rem One binary: with arguments it is the analyser, with none it is the window.
+rem There used to be a second exe, tga.exe, for the argument half alone.
 set "EXENAME=TelegramAnalyser.exe"
-set "CLINAME=tga.exe"
 
 rem This machine owns both exports, so a `cargo test` here that finds no corpus
 rem has not "skipped the legs" -- it has a broken setup, and libtest throws away
@@ -74,7 +73,7 @@ echo   2  commit   test + commit, no push
 echo   3  push     push the current branch
 echo   4  pull     pull the current branch
 echo   5  test     fmt + clippy + every suite
-echo   6  build    cargo build --release, then copy both exes into dist\
+echo   6  build    cargo build --release, then copy the exe into dist\
 echo   7  run      open the window
 echo   8  report   write report.html for an export folder
 echo   9  stats    write the --stats dump for an export folder
@@ -272,18 +271,19 @@ exit /b 0
 
 
 rem ---------------------------------------------------------------------------
-rem Build both binaries and ship them to dist\.
+rem Build the binary and ship it to dist\.
 rem
-rem The exes ship from dist\, not from target\: `cargo clean` empties target\,
+rem The exe ships from dist\, not from target\: `cargo clean` empties target\,
 rem and `save.bat clean` is a menu entry two rows down. An exe you actually use
 rem should not live somewhere a maintenance command deletes without asking.
 rem
-rem Both are copied in one step because they are one program. The window and the
-rem CLI share the reader, the metrics and the report writer, and a dist\ holding
-rem one of them from Tuesday and the other from Friday is a folder that can
-rem disagree with itself about what a report looks like.
+rem There is one file now. It was two -- the window, and tga.exe for the command
+rem line -- which meant a dist\ could hold one of them from Tuesday and the
+rem other from Friday and disagree with itself about what a report looks like.
+rem They always shared the reader, the metrics and the writer; the only thing
+rem that differed was how they were started, and argv already records that.
 rem
-rem Unlike telegram_rust's dist\, nothing is written beside these executables --
+rem Unlike telegram_rust's dist\, nothing is written beside this executable --
 rem no session key, no Exports\. See dist\.gitkeep.
 :build
 echo.
@@ -312,15 +312,12 @@ call :since TS "release build"
 if not exist "dist" mkdir dist
 call :ship "%EXENAME%"
 if errorlevel 1 goto end
-call :ship "%CLINAME%"
-if errorlevel 1 goto end
 
 echo.
 rem The difference between these two numbers is the price of the window. It was
 rem 13.6 MB when the toolkit was gpui plus gpui-component, borrowed for one text
 rem field; on egui it is about 2 MB.
-call :exesize "%EXENAME%" "  (the window)"
-call :exesize "%CLINAME%" "  (the same analyser, no toolkit)"
+call :exesize "%EXENAME%" "  (window and analyser in one)"
 
 rem The cache, reported where somebody will actually read it. cargo never
 rem garbage-collects target\, and in telegram_rust it reached 45 GB before a
@@ -384,7 +381,7 @@ echo === report: %FOLDER% ===
 call :checkcargo
 if errorlevel 1 goto end
 call :clock TS
-cargo run --release -p tga-cli --bin tga -- "%FOLDER%" --quiet
+cargo run --release -p tga-app --bin TelegramAnalyser -- "%FOLDER%" --quiet
 if errorlevel 1 (
   echo [err]  report
   set SAVE_ERROR=1
@@ -405,7 +402,7 @@ echo.
 echo === stats: %FOLDER% ===
 call :checkcargo
 if errorlevel 1 goto end
-cargo run --release -p tga-cli --bin tga -- "%FOLDER%" --quiet --stats "%FOLDER%\stats.json" --out "%FOLDER%\report.html"
+cargo run --release -p tga-app --bin TelegramAnalyser -- "%FOLDER%" --quiet --stats "%FOLDER%\stats.json" --out "%FOLDER%\report.html"
 if errorlevel 1 set SAVE_ERROR=1
 goto end
 
@@ -437,7 +434,7 @@ if not exist "baseline\ua-kolab.report.html" (
 )
 call :checkcargo
 if errorlevel 1 goto end
-cargo build --release -p tga-cli
+cargo build --release -p tga-app
 if errorlevel 1 (set SAVE_ERROR=1 & goto end)
 call :onebase "ua-kolab" "%UAEXPORT%"
 call :onebase "krgm" "%KRGMEXPORT%"
@@ -448,7 +445,7 @@ goto end
 echo === baseline: record what the report looks like now ===
 call :checkcargo
 if errorlevel 1 goto end
-cargo build --release -p tga-cli
+cargo build --release -p tga-app
 if errorlevel 1 (set SAVE_ERROR=1 & goto end)
 if not exist "baseline" mkdir "baseline"
 rem Three legs, not two. Neither export has an events file beside it, so the
@@ -479,7 +476,7 @@ echo [rec]  %~1
 set "NOTESARG="
 if not "%~3"=="" set NOTESARG=--notes "%~3"
 call :clock TS
-target\release\tga.exe "%~2" --quiet --stamp "1 January 2000" !NOTESARG! --out "baseline\%~1.report.html" --stats "baseline\%~1.stats.json"
+target\release\%EXENAME% "%~2" --quiet --stamp "1 January 2000" !NOTESARG! --out "baseline\%~1.report.html" --stats "baseline\%~1.stats.json"
 if errorlevel 1 (set SAVE_ERROR=1 & exit /b 1)
 call :since TS "%~1"
 exit /b 0
@@ -498,7 +495,7 @@ echo [leg]  %~1
 set "NOTESARG="
 if not "%~3"=="" set NOTESARG=--notes "%~3"
 call :clock TS
-target\release\tga.exe "%~2" --quiet --stamp "1 January 2000" !NOTESARG! --out "baseline\_now-%~1.report.html" --stats "baseline\_now-%~1.stats.json"
+target\release\%EXENAME% "%~2" --quiet --stamp "1 January 2000" !NOTESARG! --out "baseline\_now-%~1.report.html" --stats "baseline\_now-%~1.stats.json"
 if errorlevel 1 (set SAVE_ERROR=1 & exit /b 1)
 call :samebytes "baseline\%~1.report.html" "baseline\_now-%~1.report.html" "%~1 report"
 call :samebytes "baseline\%~1.stats.json"  "baseline\_now-%~1.stats.json"  "%~1 stats "
