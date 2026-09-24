@@ -60,12 +60,18 @@ impl State {
         }
     }
 
-    /// Re-count the `result.json` files under the field's folder.
+    /// Re-count what the field points at: `result.json` files, or the chats in
+    /// a database.
     ///
     /// **This is the one check worth making before the run**, because it is the
     /// difference between "that is not an export" and six seconds of work
     /// ending in an error. The depth matches `tga_read::load`'s own, so a folder
     /// that counts here cannot come up empty there.
+    ///
+    /// The database is looked for first. A folder holding one has no
+    /// `result.json` in it at all when the run that wrote it had only the
+    /// Database format on, so checking for files first would report "no
+    /// result.json anywhere" about a perfectly good export.
     pub fn revalidate(&mut self) {
         self.report = None;
         let Some(folder) = self.folder() else {
@@ -73,6 +79,36 @@ impl State {
             self.status = "Choose an export folder.".into();
             return;
         };
+        if let Some(db) = tga_db::find(&folder) {
+            // Titles, not counts: this runs on every keystroke in the field.
+            match tga_db::chat_titles(&db) {
+                Ok(chats) if chats.is_empty() => {
+                    self.found = Some(0);
+                    self.status = "That database holds no chats.".into();
+                }
+                Ok(chats) => {
+                    self.found = Some(chats.len());
+                    self.status = match chats.as_slice() {
+                        [(_, title)] => format!("Database: {title}."),
+                        many => format!(
+                            "Database: {} chats, largest first — {}.",
+                            many.len(),
+                            many.iter()
+                                .map(|(_, t)| t.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    };
+                }
+                // A file this build cannot read says so here rather than after
+                // the run has started; the message names the version.
+                Err(e) => {
+                    self.found = None;
+                    self.status = format!("{e}");
+                }
+            }
+            return;
+        }
         if !folder.is_dir() {
             self.found = None;
             self.status = "Not a folder.".into();

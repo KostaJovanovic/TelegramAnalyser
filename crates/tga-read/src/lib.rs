@@ -66,6 +66,23 @@ pub struct Msg {
     pub forward_from: String,
     pub forward_id: String,
     pub media: String,
+    /// The attachment's path, relative to the topic's own folder, and empty
+    /// when nothing was saved.
+    ///
+    /// Not the same string as [`file_name`](Self::file_name): the exporter
+    /// deduplicates, so `Zapisnik-KRGM-16-07-2026.docx` sent twice is
+    /// `files/Zapisnik-KRGM-16-07-2026 (2).docx` on disk the second time.
+    pub file: String,
+    /// The name the sender's own machine gave the file.
+    ///
+    /// **Carried, where it used to be dropped.** The digest threw filenames
+    /// away on the grounds that they tell a model nothing -- true of the
+    /// exporter's own `photo_2649@07-01-2026_20-19-54.jpg`, and false of every
+    /// document a person named. In the KRGM export the filename is where the
+    /// date lives: 80 of 695 document attachments carry a full one, and the
+    /// minutes named `ZAPISNIK 30.12.2024..docx` was posted 268 days after the
+    /// meeting it records.
+    pub file_name: String,
     pub file_size: i64,
     pub media_saved: bool,
     pub sticker_emoji: String,
@@ -444,6 +461,8 @@ pub fn one(raw: &Value, topic: usize, root: Option<i64>) -> Option<Msg> {
         forward_from: as_text(raw.get("forwarded_from")),
         forward_id: as_text(raw.get("forwarded_from_id")),
         media: media_kind(raw),
+        file: String::new(),
+        file_name: as_text(raw.get("file_name")),
         file_size: 0,
         media_saved: false,
         sticker_emoji: as_text(raw.get("sticker_emoji")),
@@ -472,6 +491,12 @@ pub fn one(raw: &Value, topic: usize, root: Option<i64>) -> Option<Msg> {
         }
     };
     out.media_saved = !path.is_empty() && !path.starts_with(SKIPPED_PREFIX);
+    // Only when it is really on disk. `path` otherwise holds the exporter's
+    // apology -- "(File exceeds maximum size...)" -- and joining that onto the
+    // topic folder makes a path that looks real and is not.
+    if out.media_saved {
+        out.file = path;
+    }
 
     if let Some(Value::Array(list)) = raw.get("reactions") {
         for entry in list {
@@ -519,6 +544,62 @@ pub fn one(raw: &Value, topic: usize, root: Option<i64>) -> Option<Msg> {
 // the roster
 // ---------------------------------------------------------------------------
 
+/// One entry of `participants.json`'s `members` array, or `None` if it has no
+/// id to key it by.
+///
+/// **Public because a database export has the same rows in a table** and must
+/// not grow a second copy of this: the `@` strip and the empty-role default are
+/// exactly the kind of detail two readers drift apart on.
+pub fn member(entry: &Value) -> Option<Member> {
+    if !entry.is_object() {
+        return None;
+    }
+    let key = as_text(entry.get("id"));
+    if key.is_empty() {
+        return None;
+    }
+    Some(Member {
+        key,
+        name: as_text(entry.get("name")),
+        role: match as_text(entry.get("role")) {
+            r if r.is_empty() => "member".to_string(),
+            r => r,
+        },
+        joined: as_dt(entry.get("joined")),
+        // Written with no `@` by the exporter; strip one anyway, so a
+        // hand-edited file that added it does not end up rendering `@@name`.
+        username: as_text(entry.get("username"))
+            .trim_start_matches('@')
+            .to_string(),
+        bot: entry.get("bot") == Some(&Value::Bool(true)),
+    })
+}
+
+/// The [`Topic`] a `result.json` header describes, before a message is counted.
+///
+/// **Public for the same reason as [`member`].** A database keeps the header as
+/// a JSON map in `topics.head`, so the database reader rebuilds that map and
+/// hands it here rather than reimplementing which key means what — including
+/// `topic_id`, which is [`Topic::root`] and carries the thread rule with it.
+pub fn header_topic(body: &Value, index: usize, folder: PathBuf) -> Topic {
+    Topic {
+        index,
+        name: match as_text(body.get("name")) {
+            n if n.is_empty() => folder
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            n => n,
+        },
+        folder,
+        chat_id: as_i64(body.get("id")),
+        chat_type: as_text(body.get("type")),
+        created: as_dt(body.get("topic_created")),
+        messages: 0,
+        root: as_i64(body.get("topic_id")),
+    }
+}
+
 fn roster(root: &Path) -> (Vec<Member>, Option<bool>, Option<bool>) {
     let path = root.join("participants.json");
     if !path.is_file() {
@@ -534,32 +615,7 @@ fn roster(root: &Path) -> (Vec<Member>, Option<bool>, Option<bool>) {
 
     let mut people = Vec::new();
     if let Some(Value::Array(list)) = body.get("members") {
-        for entry in list {
-            if !entry.is_object() {
-                continue;
-            }
-            let key = as_text(entry.get("id"));
-            if key.is_empty() {
-                continue;
-            }
-            let role = match as_text(entry.get("role")) {
-                r if r.is_empty() => "member".to_string(),
-                r => r,
-            };
-            people.push(Member {
-                key,
-                name: as_text(entry.get("name")),
-                role,
-                joined: as_dt(entry.get("joined")),
-                // Written with no `@` by the exporter; strip one anyway, so a
-                // hand-edited file that added it does not end up rendering
-                // `@@name`.
-                username: as_text(entry.get("username"))
-                    .trim_start_matches('@')
-                    .to_string(),
-                bot: entry.get("bot") == Some(&Value::Bool(true)),
-            });
-        }
+        people.extend(list.iter().filter_map(member));
     }
 
     // `complete` absent is not the same as `complete: false`. A roster the
@@ -610,22 +666,7 @@ pub fn load(root: &Path, mut progress: Option<Progress<'_>>) -> Result<Export> {
             serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
 
         let folder = path.parent().unwrap_or(root).to_path_buf();
-        let mut topic = Topic {
-            index,
-            name: match as_text(body.get("name")) {
-                n if n.is_empty() => folder
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                n => n,
-            },
-            folder,
-            chat_id: as_i64(body.get("id")),
-            chat_type: as_text(body.get("type")),
-            created: as_dt(body.get("topic_created")),
-            messages: 0,
-            root: as_i64(body.get("topic_id")),
-        };
+        let mut topic = header_topic(&body, index, folder);
 
         if export.members_count.is_none() {
             export.members_count = as_i64(body.get("members_count"));

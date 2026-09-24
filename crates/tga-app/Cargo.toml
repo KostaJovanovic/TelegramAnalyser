@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 tga-read = { path = "../tga-read" }
+tga-db = { path = "../tga-db" }
+tga-docs = { path = "../tga-docs" }
 tga-stats = { path = "../tga-stats" }
 tga-metrics = { path = "../tga-metrics" }
 tga-notes = { path = "../tga-notes" }
@@ -33,6 +35,9 @@ eframe = { version = "0.33", default-features = false, features = ["glow"] }
 rfd = "0.16"
 
 anyhow = { workspace = true }
+
+# The digest formats an attachment's inferred date, which is a `NaiveDate`.
+chrono.workspace = true
 
 # The command half reads a recorded --stats dump straight back into a `Stats`.
 serde_json.workspace = true

@@ -101,7 +101,13 @@ fn run(request: Request, tx: Waking) {
             label: format!("Reading {name}"),
         });
     };
-    let export = match tga_read::load(&request.folder, Some(&mut report)) {
+    // A database first, for the reason in `State::revalidate`: a folder that
+    // holds one may have no `result.json` in it at all.
+    let read = match tga_db::find(&request.folder) {
+        Some(db) => tga_db::load(&db, None, Some(&mut report)),
+        None => tga_read::load(&request.folder, Some(&mut report)),
+    };
+    let export = match read {
         Ok(export) => export,
         Err(e) => {
             tx.send(Progress::Failed(format!("{e}")));

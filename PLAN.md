@@ -52,8 +52,12 @@ of other people's conversation to put an `events.json` beside it.
 
 ```
 tga-read      export folder -> model. No UI, no network.
+tga-db        telegram.sqlite -> the same model, through tga-read.
+              Only tga-app depends on it — see below.
+tga-docs      an attachment -> its text and the date it is really from.
+              Only tga-app depends on it — see below.
 tga-notes     the hand-written annotation layer, and the digest a model reads.
-              MUST NOT depend on tga-read — see below.
+              MUST NOT depend on tga-read or tga-docs — see below.
 tga-stats     the shape of every figure, and the dump's format. Data only.
 tga-metrics   every figure, one pass over the export. No I/O.
 tga-report    the ramp, the SVG marks, and the one HTML file.
@@ -77,6 +81,15 @@ that `tga-report` renders, so a dependency on the reader there would reach
 `tga-report` transitively. `write_digest` therefore takes a plain `digest::Row`
 and the caller does the mapping from `Export` — four lines, in
 `tga-app/src/cli.rs`, and the only price the rule charges anywhere.
+
+**`tga-docs` is the same rule paying for itself a second time.** Reading a
+`.docx` means a zip reader and an XML parser; reading a `.pdf` means a PDF
+parser that panics on bad input. The obvious home for all three was
+`tga-notes`, next to the digest they feed — and that would have linked a PDF
+parser into every report, including one rendered by `--from-stats` with no
+export on disk and no attachment to open. So they live in their own crate that
+only `tga-app` reaches, `tga_notes::Attachment` is nothing but strings, and the
+`Doc -> Attachment` mapping sits in the caller beside the `Row` one.
 
 ## The three rules that change numbers
 
@@ -255,6 +268,122 @@ unanswerable:
 - **It costs 0.16 s and 27 KB** on a 333,582-message archive: one extra pass
   over the replies.
 
+## The database export
+
+TelegramExporter grew a third output format beside HTML and JSON: one
+`telegram.sqlite` per export root that accumulates across runs instead of a
+fresh folder per pass. A run with **only** that format on writes no
+`result.json` at all, so the first such export was invisible here — `load`
+failed with "No result.json under …" and there was nothing else to try.
+
+**It is a different container, not a different format**, and that is the whole
+design. `messages.payload` is the message map `result.json` carries, key for
+key; `topics.head` is the header minus the three keys the tables hold instead
+(`name` is `topics.title`, `type` and `id` are the `chats` row). So `tga-db`
+reads rows, puts those three keys back, and hands the maps to
+`tga_read::one` and `tga_read::header_topic`. Nothing about a message, a clock
+or a thread is decided twice — which is why `member` and `header_topic` became
+public rather than being copied: the `@` strip and the `topic_id`-is-`root`
+rule are exactly what two readers drift apart on.
+
+The test that earns the design is `a_database_and_a_folder_of_the_same_json_read_the_same`:
+one fixture written out both ways, both readers run, every message compared
+field by field. If the claim above ever stops being true, that is where it says
+so.
+
+Three things the format knows that a folder never could:
+
+| | |
+|---|---|
+| `deleted_seen` | a message Telegram no longer returns, kept, dated when it went missing |
+| `versions` | the payload before each edit |
+| `runs` | when each pass ran, in which mode, and what it found |
+
+**A deleted message stays in the figures.** Filtering it out would make the
+archive agree with Telegram, which is the one thing the format exists not to
+do; a message that was said is part of the history whether or not it can still
+be fetched. The count is printed instead, so nobody tries to reconcile the
+report against the live chat and quietly loses. `versions` and `runs` are read
+but not modelled — the report has no section for an edit history, and inventing
+one was not this change.
+
+Two smaller decisions:
+
+- **Read-only, always.** Opening SQLite for writing takes a lock and leaves
+  `-wal` and `-shm` files beside the database. The exporter may be writing that
+  very file; an analyser has no business doing either to somebody's archive.
+  There is a test that no such file appears.
+- **`chat_titles` exists separately from `chats`** because the window
+  revalidates on every keystroke in the path field, and counting messages per
+  chat is an index scan over the whole table. The field only needs to say what
+  the file is.
+
+## What a document is, and when it is from
+
+The digest used to render an attachment as `{"media": "document"}` — a marker,
+on the reasoning that a filename tells a model nothing and costs it tokens.
+That is true of `photo_2649@07-01-2026_20-19-54.jpg`, which the exporter
+invented, and false of everything a person named. In the KRGM re-export, 695
+messages carry a document and **610 of them have an empty `text`**: the message
+*is* the file. Those rows said nothing at all.
+
+`tga-docs` reads them. `.txt` (with a BOM and encoding guess), `.docx` (a zip
+holding `word/document.xml`), `.pdf` (the text layer, when there is one — a
+photographed page has none and there is no OCR here). Whole text, capped at
+20,000 characters; the median zapisnik is 5,014, so the cap catches 42
+documents out of 365 and the 1.6 MB outlier that would otherwise outweigh a
+month of conversation. Cost on the 450,817-message export: **2.49 MB added to a
+65.4 MB digest, and about four seconds.**
+
+**The date is the hard half, and it is why this is a crate and not a function.**
+
+| where | what it says |
+|---|---|
+| the filesystem | nothing. Every file carries the export's own mtime — all 44,000 say `2026-08-27` |
+| the message | when it was *posted*, which is right until somebody uploads an archive |
+| the filename | the real date, in eight formats, half of them without a year |
+| the text | the real date, when the document bothers to state one |
+
+The drift is not hypothetical. Five zapisnici dated 2024-12-30, 2025-01-05,
+2025-01-12, 2025-01-29 and 2025-02-04 were all posted on the afternoon of
+2025-09-24 — 232 to 268 days late. Dated by the message, a whole winter of
+meetings becomes one spike in September.
+
+So `dates::infer` runs a ladder and *names the rung it stopped on*, because a
+reader who cannot tell a written date from a guessed one cannot discount it:
+`filename` (134 of 667), `content` (83), `filename+posted` (53), `posted`
+(397 — and most of those are position papers that genuinely carry no date).
+
+Four things it took real filenames to learn:
+
+- **Day comes first.** `06.07.2026` is the sixth of July. Every document in
+  both corpora is Serbian; reading it American moves a third of the zapisnici
+  to a different month.
+- **`Izveštaj_RJMM_2004_0305.pdf` is not from 2004.** It is a weekly media
+  report covering 20 April to 3 May. Read as a year it dates the document 8,108
+  days before it was posted — so the `DDMM_DDMM` range is tried *after* every
+  full-date pattern has failed, which is what keeps a real `2004-03-05` safe.
+- **`15.6.txt` has no year and no date inside it.** The year comes from the
+  post date and the rung says `filename+posted`, so the guess is visible. The
+  first version rolled the year back whenever the date fell *after* the post,
+  which dated `ФМК X ФПН - Шетња 01.10.pdf` — a notice posted on 28 September
+  for a walk three days later — to October 2024. Announcements run ahead;
+  only a date more than half a year ahead is last year's.
+- **`1. 11. 2025` is a date and `1.\n2.\n2025` is a numbered list.** Serbian
+  prose spaces the dots, so the separator allows spaces — but `[ \t]` and never
+  `\s`, because minutes are enumerations and a newline would turn every one of
+  them into a February.
+
+The first date *written* wins, not the earliest: a zapisnik opens with its own
+date and then refers back, so sorting chronologically would date it by the
+oldest thing it mentions. The chronological span is still reported separately,
+as `from`/`to`/`n`, because "when is this from" and "what period does it
+discuss" are different questions and a media report answers them differently.
+
+URLs are blanked before the text is scanned. One corpus file is 180 lines of
+`https://promevent.rs/matursko-vece-ff-ucenici-2026/`, and every one of those
+slugs ends in something that reads as a year.
+
 ## Verification
 
 **`save.bat baseline` is the load-bearing check.** It runs the program over both
@@ -264,10 +393,36 @@ which passes the 42 hand-written notes so the annotation layer's markup — the
 rail, the markers, the cards, the coverage band, the "matches nobody" list — is
 covered too.
 
-| corpus | messages | topics |
-|---|---:|---|
-| `N:\telegram export\UA KOLAB TELEGRAM` | 6,643 | 4 |
-| `J:\temp pureraw\KRGM*` | 333,582 | 10 |
+| corpus | messages | topics | baseline | what it covers |
+|---|---:|---:|---|---|
+| `N:\telegram export\UA KOLAB TELEGRAM` | 6,643 | 4 | yes | the folder reader |
+| `J:\temp pureraw\KRGM*` | 333,582 | 10 | yes | the folder reader, at size |
+| `N:\telegram_export\KROVNA RADNA GRUPA ZA MEDIJE*` | 450,817 | 33 | no | 150 docx, 238 pdf, 9 txt |
+| `L:\9 telegram export\telegram.sqlite` | 7,077 | 7 | no | the database format |
+
+The fourth is not a folder. It is UA KOLAB re-exported with only the Database
+format on, so it contains no `result.json` at all — an export the folder reader
+cannot see, which is the only kind that proves `tga-db` is doing anything. Its
+media was fetched under a size limit: 2,217 messages carry a `file` key and
+1,920 of those read `(File exceeds maximum size…)`, which is already
+`SKIPPED_PREFIX` and so lands as `media_saved = false` with no special case.
+
+The third is the same group re-exported later and is the only one with its
+media downloaded, so it is what `tga-docs`' corpus test reads. Neither it nor
+the fourth is a baseline leg: adding one would mean recording another pair of
+files, and neither proves anything about the *report* that the first two do
+not.
+
+Two traps in that export, both of which cost an afternoon:
+
+- **`missing_media.txt` is not an attachment.** There are 30 of them, one at
+  each topic's root, and only 5 real text files — the rest of the `.txt` count
+  is the exporter's own log of downloads it failed. Anything walking the tree
+  for documents looks in `<topic>/files/` and nowhere else.
+- **133 of the 283 referenced `.docx` are not on disk.** `media_saved` says the
+  export meant to save them. A document that reads as empty is a missing file
+  far more often than a broken parser, so check the disk before the code: the
+  150 that are there all come apart, every time.
 
 Re-record with `save.bat baseline record` **only** for a change that is meant to
 alter the output, and read the diff first.
@@ -298,6 +453,19 @@ notes layouts. Those are facts about behaviour, not about provenance.
 
 ## Still open
 
+- **A database export loses its attachments.** `tga-docs` takes a `&Path` and
+  the bytes are a `blobs` row, so a `.docx` inside a `telegram.sqlite` gets a
+  name and an inferred date and no text. The halves exist —
+  `tga_db::media_index` maps a message to `(file_id, kind)` and `tga_db::blob`
+  returns the bytes — and what is missing is an `extract_bytes` beside
+  `tga_docs::extract`, plus a `file_id` on `Msg` to join them. Worth doing when
+  a database export is made with the media actually fetched; the one on disk
+  holds a single `.docx`.
+- **`versions` and `runs` are read and then dropped.** The database keeps the
+  payload before each edit and a record of every pass. Neither has anywhere to
+  go in `Stats` and the report has no section for either, so `tga-db` exposes
+  `edits()` for the count and the CLI prints it. An edit history on the
+  timeline is a real feature and was not this change.
 - **The notes still only cover one month of one topic of one archive.** The
   machinery is finished and proven; what is missing is writing more of them.
   `tga <folder> --digest` produces what a model reads, `analysis/EVENTS.md`

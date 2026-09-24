@@ -21,9 +21,9 @@ use crate::theme::{self, size, Palette};
 
 pub const TITLE: &str = "Telegram Export Analyser";
 
-const BLURB: &str = "Point this at a finished export. It reads the result.json files \
-                     already on disk and writes one report.html beside them. Nothing \
-                     is sent anywhere.";
+const BLURB: &str = "Point this at a finished export — a folder of result.json files, or \
+                     the exporter's telegram.sqlite. It reads what is already on disk and \
+                     writes one report.html beside it. Nothing is sent anywhere.";
 
 pub struct Shell {
     state: State,
@@ -88,11 +88,12 @@ impl Shell {
         }
     }
 
-    /// A folder dropped anywhere on the window.
+    /// A folder — or a database — dropped anywhere on the window.
     ///
     /// The window is the target rather than the field, which is a small one.
-    /// The first *directory* among the dropped paths wins; dropping
-    /// `result.json` itself is a reasonable mistake and does nothing rather than
+    /// The first directory wins, or the first file that is a database: those
+    /// are the two things an export can be. Dropping `result.json` itself is
+    /// still a reasonable mistake and still does nothing rather than
     /// half-working.
     fn dropped(&mut self, ctx: &egui::Context) {
         let dirs: Vec<PathBuf> = ctx.input(|i| {
@@ -100,7 +101,7 @@ impl Shell {
                 .dropped_files
                 .iter()
                 .filter_map(|f| f.path.clone())
-                .filter(|p| p.is_dir())
+                .filter(|p| p.is_dir() || tga_db::find(p).is_some())
                 .collect()
         });
         if let Some(dir) = dirs.into_iter().next() {

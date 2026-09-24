@@ -142,6 +142,8 @@ mod tests {
             forward_from: String::new(),
             forward_id: String::new(),
             media: String::new(),
+            file: String::new(),
+            file_name: String::new(),
             file_size: 0,
             media_saved: false,
             sticker_emoji: String::new(),

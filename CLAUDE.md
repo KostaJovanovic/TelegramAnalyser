@@ -36,10 +36,13 @@ Underneath it is plain cargo. Single legs:
 ```powershell
 cargo test -p tga-report --test golden     # the golden; no corpus needed
 cargo test -p tga-read   --test corpus     # the reader against a real export
+cargo test -p tga-db     --test corpus     # the exporter's own telegram.sqlite
+cargo test -p tga-docs   --test corpus     # every attachment, read for real
 cargo test --all -- --nocapture            # --nocapture matters; see below
 
-cargo run -p tga-app --bin TelegramAnalyser -- <folder>
-        [--out P] [--digest] [--no-fonts] [--stats P] [--notes P] [--stamp T]
+cargo run -p tga-app --bin TelegramAnalyser -- <folder or telegram.sqlite>
+        [--out P] [--chat ID|TITLE] [--digest] [--no-fonts] [--stats P]
+        [--notes P] [--stamp T]
 cargo run -p tga-app --bin TelegramAnalyser -- --from-stats <s.json> --out <p>
 ```
 
@@ -50,15 +53,29 @@ cargo run -p tga-app --bin TelegramAnalyser -- --from-stats <s.json> --out <p>
   nothing reports as coverage.
 - **`TGA_BLESS=1 cargo test -p tga-report --test golden`** re-records the
   golden. Read the diff before committing it.
-- `TGA_EXPORT` overrides the reader test's corpus path.
+- `TGA_EXPORT` overrides the reader test's corpus path; `TGA_DOCS_EXPORT` does
+  the same for the document test, which needs an export with attachments
+  actually downloaded; `TGA_DATABASE` for the database test.
+- **The document corpus leg is the slow one** — a minute in a debug build,
+  because it parses 238 PDFs. That is the cost of the only test that proves
+  `pdf-extract` survives real input, so it is not worth trimming; it is worth
+  knowing about before assuming the suite has hung.
 
 ## Layering, and the two rules that pay for themselves
 
 ```
 tga-read      export folder -> model. Both layouts (ours: result.json per topic
               at the root; Desktop: chats/chat_<id>/result.json). No UI, no network.
+tga-db        telegram.sqlite -> the same model. The exporter's database output
+              is a different container, not a different format: it hands the
+              stored JSON to tga-read rather than parsing it again. Depends on
+              tga-read; only tga-app depends on it.
+tga-docs      a .txt/.docx/.pdf attachment -> its text and its real date.
+              Nothing depends on it but tga-app, on purpose: it carries a zip
+              reader, an XML parser and a PDF parser, and none of those belong
+              anywhere near tga-report.
 tga-notes     the hand-written annotation layer + the model-facing digest.
-              MUST NOT depend on tga-read.
+              MUST NOT depend on tga-read or tga-docs.
 tga-stats     the shape of every figure, and the dump's format. Data only.
 tga-metrics   every figure, one pass. No I/O. Fills in a tga_stats::Stats.
 tga-report    the ramp, the SVG marks, the one HTML file. Reads a Stats.
@@ -76,7 +93,9 @@ shape lives in `tga-stats` rather than in either side**, so the writer can read
 it without depending on the reader or the metrics, and the compiler checks every
 field name. `tga-notes` inherits the rule at one remove because it carries the
 `Event` type `tga-report` renders; the `Export -> digest::Row` mapping therefore
-lives in the *caller* (`tga-app/src/cli.rs`).
+lives in the *caller* (`tga-app/src/cli.rs`). Reading an attachment is the same
+rule one step further out: `tga_notes::Attachment` is all strings, and
+`tga-app/src/cli.rs` is what calls `tga-docs` and formats the dates into them.
 
 Every field of `Stats` has a `Default` and the struct is `#[serde(default)]`, so
 a dump with a branch missing renders an empty section rather than failing to
@@ -89,6 +108,22 @@ nothing in it.
 - **Time is two clocks.** Anything with a calendar or clock face reads
   `Msg::when` (naive local wall clock); anything measuring a *duration* reads
   `Msg::unix`, which stays monotonic across DST. Decided once in `tga-read`.
+- **A deleted message still counts.** A `telegram.sqlite` keeps a message
+  Telegram no longer returns, marked with the date it went missing, and
+  `tga-db` does *not* filter on `deleted_seen`. Keeping what was deleted is the
+  whole reason that format exists; leaving it out of the figures would make the
+  archive agree with Telegram, which is the one thing it is meant not to do.
+  The count is reported separately so nobody has to reconcile the report with a
+  live chat and lose.
+- **A document has its own date, and it is not the message's.** An attachment
+  is dated by `tga-docs` from its filename and its text, never from the
+  filesystem — every file in an export carries the mtime of the moment the
+  exporter wrote it, and all 44,000 in the KRGM corpus say `2026-08-27`. The
+  post date is the last resort and the digest says so: `doc.src` is one of
+  `filename`, `content`, `filename+posted` or `posted`, and dropping it would
+  leave a reader unable to tell a written date from a guessed one. This matters
+  because people post archives — five KRGM zapisnici spanning December 2024 to
+  February 2025 were all uploaded on one afternoon in September.
 - **A sender is a typed peer key, never a display name.** Grouping by name
   splits one person across their renames and merges two people who share one.
 - **A forum topic is a thread**, so every top-level message in one is marked as
@@ -126,15 +161,37 @@ call unless the change was meant to alter the output — and then it is
 `krgm`, and `krgm-notes`, which passes the 42 hand-written notes so the whole
 annotation layer's markup is covered too.
 
-Two real corpora, both on removable drives:
+Four real corpora, all on removable drives:
 
-| corpus | messages | topics |
-|---|---:|---|
-| `N:\telegram export\UA KOLAB TELEGRAM` | 6,643 | 4 |
-| `J:\temp pureraw\KRGM*` | 333,582 | 10 |
+| corpus | messages | topics | what it is for |
+|---|---:|---:|---|
+| `N:\telegram export\UA KOLAB TELEGRAM` | 6,643 | 4 | baseline |
+| `J:\temp pureraw\KRGM*` | 333,582 | 10 | baseline |
+| `N:\telegram_export\KROVNA RADNA GRUPA ZA MEDIJE*` | 450,817 | 33 | documents: 150 docx, 238 pdf, 9 txt |
+| `L:\9 telegram export\telegram.sqlite` | 7,077 | 7 | the database format |
+
+The fourth is the exporter's database output, not a folder: UA KOLAB again,
+re-exported with only the Database format on, so **there is no `result.json`
+anywhere in it**. That is exactly why it is worth keeping — an export that the
+folder reader cannot see at all. It holds two chats (UA KOLAB and Telegram's
+own service notifications), which the exporter is moving away from; until then
+`--chat` picks and the default is the largest.
+
+The third is the same group as `KRGM` re-exported later, and it is the only one
+with the media downloaded — which is what makes it the document test's corpus.
+**The `.txt` files at each topic's root are not attachments.** They are
+`missing_media.txt`, the exporter's log of what it failed to fetch, and there
+are 30 of them against 5 real text files; anything walking the tree for
+documents must look in `<topic>/files/` only. The same export also *references*
+133 `.docx` it never downloaded, so a document that reads as empty is usually a
+missing file rather than a broken parser — check the disk before the code.
 
 Re-record with `save.bat baseline record` **only** for a change that is meant to
-alter the output, and read the diff first.
+alter the output, and read the diff first. The digest is not in the baseline:
+it is written beside the export, not into `baseline/`, so a change to
+`tga-docs` or to `digest.jsonl`'s shape passes all three legs untouched. That
+is correct — the report does not read a single attachment — but it does mean
+the document work has only its own corpus test behind it.
 
 `baseline/`, `reference/`, `report*.html` and `*.stats.json` are gitignored —
 they are verbatim chat history from real people. (`reference/` holds output from

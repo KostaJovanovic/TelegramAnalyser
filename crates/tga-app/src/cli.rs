@@ -19,13 +19,20 @@ const USAGE: &str = "\
 Telegram Export Analyser
 
     TelegramAnalyser <export folder> [options]
+    TelegramAnalyser <telegram.sqlite> [options]
     TelegramAnalyser --from-stats <stats.json> --out <report.html> [options]
 
     With no arguments at all, the window opens instead.
 
+    An export is a folder of result.json files, or the exporter's database
+    output -- a telegram.sqlite, named directly or found beside the folder
+    given. Both produce the same report from the same figures.
+
 Options
-    --out PATH        where to write the report (default: report.html in the
-                      export folder)
+    --out PATH        where to write the report (default: report.html beside
+                      the export)
+    --chat ID|TITLE   which chat to read out of a database that holds more
+                      than one. Default: the largest, with the others named.
     --digest          also write analysis/digest.jsonl and analysis/EVENTS.md,
                       which is what a model needs to map events onto the
                       timeline
@@ -71,6 +78,7 @@ pub fn run(args: Vec<String>) -> Result<()> {
     let mut stats_out: Option<PathBuf> = None;
     let mut quiet = false;
     let mut stamp: Option<String> = None;
+    let mut chat: Option<String> = None;
 
     let mut rest = args[flags_from..].iter();
     while let Some(flag) = rest.next() {
@@ -78,6 +86,10 @@ pub fn run(args: Vec<String>) -> Result<()> {
             "--out" => match rest.next() {
                 Some(path) => out = Some(PathBuf::from(path)),
                 None => bail!("--out needs a path"),
+            },
+            "--chat" => match rest.next() {
+                Some(which) => chat = Some(which.clone()),
+                None => bail!("--chat needs a chat id or title"),
             },
             "--digest" => digest = true,
             "--no-fonts" => embed_fonts = false,
@@ -170,17 +182,30 @@ pub fn run(args: Vec<String>) -> Result<()> {
 {USAGE}"
         );
     };
-    if !folder.is_dir() {
+    // A database is a file, so `is_dir` cannot be the gate any more: the
+    // exporter writes `<output_dir>/telegram.sqlite`, and either the folder or
+    // the file itself is a reasonable thing to be handed.
+    let database = tga_db::find(&folder);
+    if database.is_none() && !folder.is_dir() {
         bail!("Not a folder: {}", folder.display());
     }
-    let out = out.unwrap_or_else(|| folder.join("report.html"));
+    // Beside the database, not inside it. A report written next to the file is
+    // where somebody handed the folder would look for it either way.
+    let beside = match &database {
+        Some(db) => db.parent().unwrap_or(&folder).to_path_buf(),
+        None => folder.clone(),
+    };
+    let out = out.unwrap_or_else(|| beside.join("report.html"));
 
     let mut progress = |done: usize, total: usize, name: &str| {
         if !quiet {
             println!("  read {done}/{total}  {name}");
         }
     };
-    let export = tga_read::load(&folder, Some(&mut progress))?;
+    let export = match &database {
+        Some(db) => read_database(db, chat.as_deref(), quiet, &mut progress)?,
+        None => tga_read::load(&folder, Some(&mut progress))?,
+    };
     if export.msgs.is_empty() {
         bail!("That export has no messages in it.");
     }
@@ -230,6 +255,53 @@ pub fn run(args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// Read a chat out of a database export, saying what the format knows and the
+/// folder format never could.
+///
+/// The two extra lines are not decoration. A message Telegram has dropped is
+/// still in the figures — that is the point of the format — so a reader who is
+/// not told is looking at counts they cannot reconcile with the live chat.
+fn read_database(
+    db: &Path,
+    wanted: Option<&str>,
+    quiet: bool,
+    progress: tga_read::Progress<'_>,
+) -> anyhow::Result<tga_read::Export> {
+    let chats = tga_db::chats(db)?;
+    let export = tga_db::load(db, wanted, Some(progress))?;
+
+    if !quiet {
+        println!("  database {}", db.display());
+        let id = export.topics.first().and_then(|t| t.chat_id);
+        if let Some(id) = id {
+            let deleted = tga_db::deleted(db, id).unwrap_or(0);
+            let (edited, versions) = tga_db::edits(db, id).unwrap_or((0, 0));
+            if deleted > 0 {
+                println!("  {deleted} deleted on Telegram, kept, and counted here");
+            }
+            if edited > 0 {
+                println!("  {edited} edited, {versions} earlier versions kept (not yet read)");
+            }
+        }
+        // The exporter is moving to one database per chat; until then, a file
+        // with several is read as its largest and the rest are named rather
+        // than silently passed over.
+        if chats.len() > 1 {
+            println!(
+                "  this database holds {} chats; the others were not read:",
+                chats.len()
+            );
+            for other in chats.iter().filter(|c| Some(c.id) != id) {
+                println!(
+                    "    --chat {}  {}  ({} messages)",
+                    other.id, other.title, other.messages
+                );
+            }
+        }
+    }
+    Ok(export)
+}
+
 /// The digest's view of the export.
 ///
 /// This mapping lives here rather than in `tga-notes`, because that crate must
@@ -263,6 +335,7 @@ pub(crate) fn digest_rows(
             text: tga_notes::digest::squeeze(&msg.text),
             re: msg.reply_to,
             media: msg.media.clone(),
+            doc: attachment(export, msg),
             reactions: if msg.reactions.is_empty() {
                 None
             } else {
@@ -270,6 +343,47 @@ pub(crate) fn digest_rows(
             },
         })
         .collect()
+}
+
+/// Read the document a message carries, if it carries one this build can open.
+///
+/// Sits here for the same reason `digest_rows` does, one rule further out:
+/// `tga-notes` may not depend on `tga-docs` either, because `tga-report`
+/// depends on `tga-notes` and has no business linking a PDF parser. So the
+/// caller does the reading and hands over strings.
+///
+/// The cost is only paid on the `--digest` path. Reading seven hundred
+/// documents is not something a report should do -- it does not use them, and
+/// `--from-stats` renders one with no export on disk at all.
+fn attachment(export: &tga_read::Export, msg: &tga_read::Msg) -> Option<tga_notes::Attachment> {
+    if msg.file.is_empty() || !tga_docs::is_document(&msg.file_name) {
+        return None;
+    }
+    // `file` is relative to the topic's own folder, not to the export root.
+    let path = export.topics.get(msg.topic)?.folder.join(&msg.file);
+    let posted = msg.when.date();
+
+    // A document that could not be opened still gets a row: the name and the
+    // date are most of the value, and a scanned PDF -- a photograph of a page,
+    // with no text layer -- is common enough that dropping it would quietly
+    // hide a whole class of shared paperwork.
+    let doc = tga_docs::read(&path, &msg.file_name, posted);
+    let dates = doc
+        .as_ref()
+        .map(|d| d.dates.clone())
+        .unwrap_or_else(|| tga_docs::dates::infer(&msg.file_name, "", posted));
+
+    let day = |d: Option<chrono::NaiveDate>| d.map(|d| d.to_string()).unwrap_or_default();
+    Some(tga_notes::Attachment {
+        name: msg.file_name.clone(),
+        date: day(dates.best),
+        date_src: dates.src.as_str().to_string(),
+        from: day(dates.from),
+        to: day(dates.to),
+        n: dates.n,
+        text: doc.as_ref().map(|d| d.text.clone()).unwrap_or_default(),
+        cut: doc.as_ref().is_some_and(|d| d.cut),
+    })
 }
 
 /// Write UTF-8 with `\n` line endings, as the Python's `newline="\n"` does.

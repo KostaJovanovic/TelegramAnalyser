@@ -2,8 +2,18 @@
 //!
 //! A [`Row`] is a message trimmed to what a reader needs in order to judge
 //! *what happened*: who, when, in which topic, what they said, what it
-//! answered, and how much the room reacted. Media becomes a marker rather than
-//! a path, because a filename tells a model nothing and costs it tokens.
+//! answered, and how much the room reacted.
+//!
+//! **Media is a marker, except when it is a document.** A picture becomes the
+//! bare word `photo`, because `photo_2649@07-01-2026_20-19-54.jpg` is a name
+//! the exporter invented and tells a model nothing it will pay tokens for. A
+//! document is the opposite case and the rule used to lose it: 610 of the KRGM
+//! export's 695 document attachments arrive with an empty `text`, so the
+//! message *is* the file, and rendering it as `{"media": "document"}` told a
+//! reader only that something existed. Those carry an [`Attachment`] instead --
+//! the name a person chose, the text inside, and when the document is really
+//! from, which is usually not when it was posted. The reading is
+//! `tga-docs`' job; this crate only carries the answer.
 //!
 //! Service messages belong in it — a join, a rename or a pin is often exactly
 //! the moment worth marking.
@@ -37,7 +47,37 @@ pub struct Row {
     /// The message this answers.
     pub re: Option<i64>,
     pub media: String,
+    /// Set only for an attachment this build can read the inside of.
+    pub doc: Option<Attachment>,
     pub reactions: Option<i64>,
+}
+
+/// A document attachment, read.
+///
+/// Every field is a string rather than a date or an enum because this crate
+/// must stay free of `tga-docs` for the same reason it stays free of
+/// `tga-read` -- `tga-report` depends on it, and the report has no business
+/// linking a PDF parser. The caller formats and fills these in.
+#[derive(Debug, Clone, Default)]
+pub struct Attachment {
+    /// The name the *sender* gave it, not the deduplicated one on disk.
+    pub name: String,
+    /// When the document is really from, `YYYY-MM-DD`.
+    pub date: String,
+    /// Which rung that came off: `filename`, `content`, `filename+posted` or
+    /// `posted`. A reader that cannot tell an inferred date from a written one
+    /// has no way to discount it, so this is never omitted.
+    pub date_src: String,
+    /// Earliest and latest date written *inside* the document, and how many
+    /// there were. The period it discusses, as against the day it is from.
+    pub from: String,
+    pub to: String,
+    pub n: usize,
+    /// The text, empty when there was none to get -- a scanned PDF is a
+    /// photograph of a page and there is no OCR here.
+    pub text: String,
+    /// Whether the text was cut at the budget.
+    pub cut: bool,
 }
 
 /// `" ".join(text.split())`, then trimmed to [`MAX_CHARS`] with an ellipsis.
@@ -89,6 +129,26 @@ pub fn write_digest(rows: &[Row], out_dir: &Path) -> std::io::Result<PathBuf> {
         if !row.media.is_empty() {
             line.push_str(&format!(", \"media\": {}", quoted(&row.media)));
         }
+        if let Some(doc) = &row.doc {
+            // `text` last, and `cut` after it, so a line stays skimmable: the
+            // name and the dates are what a reader scans for, and putting a
+            // few thousand characters in front of them buries every one.
+            line.push_str(&format!(", \"doc\": {{\"name\": {}", quoted(&doc.name)));
+            line.push_str(&format!(", \"date\": {}", quoted(&doc.date)));
+            line.push_str(&format!(", \"src\": {}", quoted(&doc.date_src)));
+            if doc.n > 0 {
+                line.push_str(&format!(", \"from\": {}", quoted(&doc.from)));
+                line.push_str(&format!(", \"to\": {}", quoted(&doc.to)));
+                line.push_str(&format!(", \"n\": {}", doc.n));
+            }
+            if !doc.text.is_empty() {
+                line.push_str(&format!(", \"text\": {}", quoted(&doc.text)));
+            }
+            if doc.cut {
+                line.push_str(", \"cut\": true");
+            }
+            line.push('}');
+        }
         if let Some(total) = row.reactions {
             line.push_str(&format!(", \"reactions\": {total}"));
         }
@@ -108,6 +168,34 @@ pub const BRIEF: &str = r#"# Mapping events onto the timeline
 `digest.jsonl` is this export's whole history, one JSON object per line,
 oldest first: `id`, `t` (local time), `topic`, `who`, `text`, and where they
 apply `re` (the message it answers), `media`, `reactions` and `service`.
+
+A message carrying a document it was possible to read also has a `doc`:
+
+    "doc": {
+      "name": "ZAPISNIK 30.12.2024..docx",
+      "date": "2024-12-30",   the day the document is from
+      "src":  "filename",     where that date came from -- read this
+      "from": "2024-12-30",   earliest date written inside it
+      "to":   "2025-01-08",   latest, and
+      "n": 7,                 how many there were
+      "text": "..."           what it says; "cut": true if it was truncated
+    }
+
+**`date` is not `t`, and the difference is the point.** `t` is when the file
+was posted; `date` is when it was written. They come apart whenever somebody
+empties a folder into the chat -- five of these minutes, spanning December
+2024 to February 2025, were all posted on one afternoon in September. Date an
+event by the document, not by the message that carried it.
+
+`src` says how much to trust `date`:
+
+- `filename` -- a full date in the name a person chose. Reliable.
+- `content` -- a date written inside the document. Reliable.
+- `filename+posted` -- the name gave a day and a month but no year, so the
+  year is the post date's. Right in the ordinary case, wrong for anything
+  shared more than a year late.
+- `posted` -- no date found anywhere. This is only `t` again. Do not present
+  it as the document's date.
 
 Read it and write `events.json` beside it. The analyser picks that file up on
 its next run and pins each event to the report's timeline, where it can be
@@ -136,7 +224,7 @@ event a span rather than a moment. `kind` is free text -- the report groups by
 whatever values it finds -- though `milestone`, `decision`, `conflict`,
 `action`, `arrival` and `topic` are the ones it has names for.
 
-Three rules that keep the timeline worth reading:
+Four rules that keep the timeline worth reading:
 
 - **Cite.** Every event lists the message ids it rests on. An event with no
   `messages` is an assertion the reader cannot check, and the report marks it
@@ -144,8 +232,12 @@ Three rules that keep the timeline worth reading:
 - **Mark what changed, not what was said.** A busy week is already in the
   ribbon underneath. An event earns its place by naming a decision, a split, a
   departure or a turn the numbers cannot show.
+- **Date a document by `doc.date`, not by `t`.** A meeting happened when it
+  happened. Pinning its minutes to the day somebody got round to uploading
+  them puts the whole of one winter on one afternoon in September.
 - **Say when you are guessing.** `confidence` is `high`, `medium` or `low`,
   and low is a perfectly good answer -- it is rendered differently, not hidden.
+  A `doc` whose `src` is `posted` or `filename+posted` is a reason to use it.
 "#;
 
 pub fn write_brief(out_dir: &Path) -> std::io::Result<PathBuf> {

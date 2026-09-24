@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/tga-read",
+    "crates/tga-db",
+    "crates/tga-docs",
     "crates/tga-notes",
     "crates/tga-stats",
     "crates/tga-metrics",
